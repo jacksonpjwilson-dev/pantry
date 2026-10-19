@@ -1,6 +1,6 @@
 /* Pantry app (p1). Widget-home style matching Logbook v2. */
 (function(){
-const VERSION='p1',LOGBOOK_URL='https://jacksonpjwilson-dev.github.io/logbook-v2/preview-widget/';
+const VERSION='p2',LOGBOOK_URL='https://jacksonpjwilson-dev.github.io/logbook-v2/preview-widget/';
 const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const iso=d=>{const x=new Date(d);x.setMinutes(x.getMinutes()-x.getTimezoneOffset());return x.toISOString().slice(0,10)};
@@ -54,6 +54,12 @@ const fq=(v,u)=>u==='count'?nfmt(v,u):`${nfmt(v,u)} ${u}`;
 const fqItem=it=>fq(it.qty,it.unit)+(it.unit==='count'?' left':'');
 const STEP={count:1,g:100,kg:.5,oz:4,lb:.5,ml:100,L:.5,'fl oz':4,cup:1,tbsp:1,tsp:1};
 const CATS=['Fridge','Freezer','Pantry','Produce','Spices','Snacks','Drinks','Other'];
+/* p2: first-run setup answers live in meta/state.setup (no new docs, so existing rules and data are untouched) */
+const STAPLE_CATS=['Fridge','Freezer','Pantry','Produce','Dairy','Meat & fish','Breakfast','Baking','Spices','Snacks','Drinks','Household'];
+const SU=()=>(M().state&&M().state.setup)||{};
+const v2Off=()=>SU().linkV2===false;
+const catList=()=>[...new Set((SU().cats||[]).concat(CATS,items().map(x=>x.category).filter(Boolean)))];
+const LOWOPT=[[null,'Don’t warn'],[1,'1 left'],[2,'2 left'],[3,'3 left']];
 const PL={ok:'In stock',low:'Low',out:'Out'};
 const pill=it=>{const s=PE.status(it);return `<span class="pill ${s}">${PL[s]}</span>`};
 const when=ms=>{if(!ms)return '';const d=new Date(ms),t=d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',hourCycle:'h23'});return iso(d)===iso(new Date())?t:d.toLocaleDateString(undefined,{month:'short',day:'numeric'})+' '+t};
@@ -77,7 +83,7 @@ async function applyOps(ops){const inbox=Object.assign({},M().inbox);let inboxCh
   else if(op.t==='uninbox'){if(inbox[op.key]){delete inbox[op.key];inboxChanged=true}}}
  if(inboxChanged)await S.store.setMeta('inbox',inbox);return {eaten,fixed,added}}
 const stateFor=()=>{const st=M().state||{};return {items:D().items,ledger:Object.values(D().ledger),links:M().links||{},ignored:M().ignored||{},inbox:M().inbox||{},startDate:st.startDate,lastProcessed:st.lastProcessed||0}};
-async function runSync(manual){if(S.syncing||!S.store)return;S.syncing=true;if(manual)render();
+async function runSync(manual){if(S.syncing||!S.store)return;if(v2Off()){S.v2s={ok:null,off:true,msg:'Logbook link is off'};if(manual)render();return}S.syncing=true;if(manual)render();
  try{const v2=await S.store.readV2();S.v2=v2;
   if(!v2){S.v2s={ok:false,msg:S.store.kind==='cloud'?'No Logbook v2 data in this account yet. Turn on sync in Logbook v2 (Settings › Sign in).':'No Logbook v2 data on this device yet.'}}
   else{const {ops,cursor}=PE.plan(v2,stateFor()),r=await applyOps(ops);const st=Object.assign({},M().state,{lastProcessed:cursor,lastCheck:Date.now()});await S.store.setMeta('state',st);
@@ -147,11 +153,12 @@ V.settings=()=>{const u=S.store.user,st=M().state||{},ig=Object.entries(M().igno
  const acct=cloud?`<div class="kv"><span>Signed in</span><b>${esc(u.email||u.displayName||'Google account')}</b></div><div class="kv"><span>Saved to</span><b>Your account (cloud)</b></div><button class="btn ghost block sm" id="signout" style="margin-top:10px">Sign out</button><p class="muted" style="margin:8px 0 0">Pantry and Logbook share one sign-in on this site, so signing out here also signs you out of Logbook on this browser.</p>`
   :`<div class="kv"><span>Mode</span><b>This device only</b></div><p class="muted">Sign in to keep your pantry in your account and read your Logbook from any device.</p><button class="btn block gbtn" id="sg">${IC.google.replace('<svg','<svg width="20" height="20"')} Sign in with Google</button><button class="btn ghost block" id="se">${IC.mail} Sign in with email</button>`;
  return {title:'Settings',body:`<div class="gcat">Account</div><div class="card">${acct}</div>
- <div class="gcat">Logbook v2</div><div class="card"><div class="kv"><span>Status</span><b>${S.syncing?'Checking…':esc(S.v2s.ok===false?'Problem':S.v2s.ok?'Connected':'Not checked')}</b></div>${S.v2s.ok===false?`<p class="err">${esc(S.v2s.msg)}</p>`:''}
+ <div class="gcat">Logbook v2</div><div class="card"><div class="kv"><span>Status</span><b>${v2Off()?'Off':S.syncing?'Checking…':esc(S.v2s.ok===false?'Problem':S.v2s.ok?'Connected':'Not checked')}</b></div>${S.v2s.ok===false?`<p class="err">${esc(S.v2s.msg)}</p>`:''}
   <div class="kv"><span>Last check</span><b>${st.lastCheck?when(st.lastCheck):'—'}</b></div><div class="kv"><span>Reads from</span><b>${cloud?'Your Logbook v2 account':'Logbook v2 on this browser'}</b></div>
   <label class="f" for="sd">Count food logged from</label><input type="date" id="sd" value="${esc(st.startDate||iso(new Date()))}">
-  <button class="btn block sm" id="chk" style="margin-top:12px" ${S.syncing?'disabled':''}>${IC.sync.replace('<svg','<svg width="18" height="18"')} Check Logbook now</button>
+  <button class="btn ghost block sm" id="v2tog" style="margin-top:12px">${v2Off()?'Turn on Logbook link':'Turn off Logbook link'}</button><button class="btn block sm" id="chk" style="margin-top:8px" ${S.syncing||v2Off()?'disabled':''}>${IC.sync.replace('<svg','<svg width="18" height="18"')} Check Logbook now</button>
   <p class="muted" style="margin:10px 0 0">Read only: the pantry never changes your Logbook. Each logged food is counted once, and if you edit or delete it in Logbook the stock is put back.</p></div>
+ <div class="gcat">Setup</div><div class="card"><div class="kv"><span>Household</span><b>${SU().household?esc(SU().household)+(SU().household==='1'?' person':' people'):'—'}</b></div><div class="kv"><span>Categories first</span><b>${esc((SU().cats||[]).join(', ')||'Default')}</b></div><div class="kv"><span>Warn when low</span><b>${esc((LOWOPT.find(o=>o[0]===(SU().lowAt??null))||LOWOPT[0])[1])}</b></div><button class="btn ghost block sm" id="resetup" style="margin-top:10px">Run setup again</button></div>
  <div class="gcat">Appearance</div><div class="card"><div class="seg">${[['auto','Auto'],['light','Light'],['dark','Dark']].map(([k,n])=>`<button data-mode="${k}" class="${TH.mode===k?'on':''}">${n}</button>`).join('')}</div>
   <div class="cwgrid">${CW_ORDER.map(k=>{const c=CW[k];return `<button class="cw ${TH.cw===k?'on':''}" data-cw="${k}"><div class="sw">${[c.L.a,c.L.a2,c.L.a3,c.Dk.bg].map(x=>`<i style="background:${x}"></i>`).join('')}</div><b>${esc(c.n)}</b></button>`}).join('')}</div></div>
  ${ig.length?`<div class="gcat">Not pantry items</div><div class="card"><div class="list">${ig.map(([fid,n])=>`<div class="item" style="cursor:default"><div class="grow t">${esc(n)}</div><button class="undo" data-unignore="${esc(fid)}">Restore</button></div>`).join('')}</div></div>`:''}
@@ -159,7 +166,7 @@ V.settings=()=>{const u=S.store.user,st=M().state||{},ig=Object.entries(M().igno
  ${cloud&&/denied/.test(S.loadErr||'')?`<div class="note">Cloud access is blocked by the Firestore rules. Jackson needs to add the pantry rule in the Firebase console.</div>`:''}
  <p class="muted" style="text-align:center;margin:18px 0 0">Pantry ${VERSION} · <a href="${LOGBOOK_URL}" style="color:var(--accent)">Open Logbook v2</a></p>`}};
 /* ---------- sheets ---------- */
-function editSheet(id,preset){const it=id?D().items[id]:Object.assign({unit:'count',category:'Pantry'},preset);const cats=[...new Set(CATS.concat(items().map(x=>x.category).filter(Boolean)))];
+function editSheet(id,preset){const it=id?D().items[id]:Object.assign({unit:'count',category:(SU().cats||[])[0]||'Pantry',lowAt:SU().lowAt??null},preset);const cats=catList();
  sheet(`<h3>${id?'Edit item':'New item'}</h3><label class="f" for="en">Name</label><input id="en" value="${esc(it.name||'')}" placeholder="e.g. Eggs" autofocus>
  <div class="row"><div class="grow"><label class="f" for="eu">Unit</label><select id="eu">${PE.ITEM_UNITS.map(u=>`<option value="${u}" ${u===it.unit?'selected':''}>${u==='count'?'count (whole items)':u}</option>`).join('')}</select></div><div class="grow"><label class="f" for="ec">Category</label><select id="ec">${cats.map(c=>`<option ${c===(it.category||'Pantry')?'selected':''}>${esc(c)}</option>`).join('')}</select></div></div>
  ${id?'':`<label class="f" for="eq">Amount on hand</label><input id="eq" inputmode="decimal" value="${esc(it.qty??'')}" placeholder="0">`}
@@ -220,7 +227,7 @@ function render(anim){const app=$('#app');if(!S.store){app.innerHTML=S.booting?'
 document.addEventListener('input',e=>{if(e.target.id==='q'){S.q=e.target.value;render()}});
 document.addEventListener('change',async e=>{if(e.target.id==='sd'){const v=e.target.value;if(!v)return;await guard(()=>S.store.setMeta('state',Object.assign({},M().state,{startDate:v,lastProcessed:0})),'Counting food from '+prettyDate(v));runSync(true)}});
 document.addEventListener('click',async e=>{const t=e.target,c=s=>t.closest(s);let b;
- if(c('.sheet-bg')||c('.pop-bg'))return;
+ if(c('.sheet-bg')||c('.pop-bg')||c('#setup'))return;
  if(!S.store){if(c('#wg'))return google();if(c('#we'))return emailSheet();if(c('#wl'))return useLocal();return}
  if((b=c('[data-back]')))return back();
  if((b=c('[data-add]')))return editSheet(null);
@@ -243,20 +250,44 @@ document.addEventListener('click',async e=>{const t=e.target,c=s=>t.closest(s);l
  if((b=c('[data-mode]'))){TH.mode=b.dataset.mode;saveTheme();return render()}
  if((b=c('[data-cw]'))){TH.cw=b.dataset.cw;saveTheme();return render()}
  if(c('#chk'))return runSync(true);
+ if(c('#resetup'))return setupFlow();
+ if(c('#v2tog')){const on=v2Off();await guard(()=>S.store.setMeta('state',Object.assign({},M().state,{setup:Object.assign({},SU(),{linkV2:on})})),on?'Logbook link on':'Logbook link off');S.v2s={};if(on)runSync(true);return}
  if(c('#sg'))return google();if(c('#se'))return emailSheet();
  if(c('#signout')){if(await pop({title:'Sign out?',msg:'This also signs you out of Logbook on this browser.',ok:'Sign out'})){await STORE.signOut();localStorage.removeItem('pantry:mode');S.store=null;S.stack=[];S.signedOutNote=false;render()}return}
  if(c('#dl')){const blob=new Blob([JSON.stringify({exportedAt:PE.ontario(Date.now()),...D()},null,1)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='pantry-backup-'+iso(new Date())+'.json';a.click();return}
  if(c('#wipe')){if(await pop({title:'Erase this device’s pantry?',msg:'All items and history on this device are deleted. This can’t be undone.',ok:'Erase',danger:true})){S.store.wipe();localStorage.removeItem('pantry:mode');S.store=null;S.stack=[];render()}return}});
+/* ---------- first-run setup (p2) ---------- */
+// Shown once after sign-in (or "continue without account") for a brand-new pantry. Existing pantries with items never see it.
+function needsSetup(){return !(M().state&&M().state.setup)&&!items().length}
+function setupFlow(){const s=SU();S.su={step:0,household:s.household||'1',linkV2:s.linkV2!==false,cats:(s.cats||['Fridge','Pantry','Produce']).slice(),lowAt:s.lowAt??1};drawSetup()}
+function drawSetup(){const o=S.su;let el=$('#setup');if(!el){el=document.createElement('div');el.id='setup';el.className='welcome';document.body.appendChild(el)}
+ const N=4,st=o.step;let h,sub,form;
+ if(st===0){h='Who are you shopping for?';sub='Helps size your grocery list later.';form=`<div class="seg">${['1','2','3','4','5+'].map(v=>`<button data-suh="${v}" class="${o.household===v?'on':''}">${v}</button>`).join('')}</div>`}
+ else if(st===1){h='Link Logbook v2?';sub='Foods you log in Logbook v2 come off your stock by themselves. Read only, it never changes your Logbook.';form=`<div class="seg"><button data-sul="1" class="${o.linkV2?'on':''}">Yes, link it</button><button data-sul="0" class="${o.linkV2?'':'on'}">Not now</button></div>`}
+ else if(st===2){h='What do you keep?';sub='Pick the categories you use. They show first when you add items.';form=`<div class="chips">${STAPLE_CATS.map(c=>`<button class="chip ${o.cats.includes(c)?'on':''}" data-suc="${esc(c)}">${esc(c)}</button>`).join('')}</div>`}
+ else{h='When should we warn you?';sub='New items get this low-stock level. You can change it per item.';form=`<div class="seg">${LOWOPT.map(([v,n],i)=>`<button data-sulo="${i}" class="${o.lowAt===v?'on':''}">${n}</button>`).join('')}</div>`}
+ el.innerHTML=`<div class="inner">${st===0?ART('art'):''}<p class="muted" style="text-align:center;margin:0 0 4px;font-size:12.5px;letter-spacing:.06em;text-transform:uppercase">Setup · ${st+1} of ${N}</p><h1 style="font-size:26px">${h}</h1><p class="lead">${sub}</p>${form}
+  <div class="row" style="gap:10px;margin-top:18px"><button class="btn ghost grow" id="su_b">${st?'Back':'Skip'}</button><button class="btn grow" id="su_n">${st===N-1?'Finish':'Continue'}</button></div></div>`;
+ el.querySelectorAll('[data-suh]').forEach(b=>b.onclick=()=>{o.household=b.dataset.suh;drawSetup()});
+ el.querySelectorAll('[data-sul]').forEach(b=>b.onclick=()=>{o.linkV2=b.dataset.sul==='1';drawSetup()});
+ el.querySelectorAll('[data-suc]').forEach(b=>b.onclick=()=>{const c=b.dataset.suc,i=o.cats.indexOf(c);i<0?o.cats.push(c):o.cats.splice(i,1);drawSetup()});
+ el.querySelectorAll('[data-sulo]').forEach(b=>b.onclick=()=>{o.lowAt=LOWOPT[+b.dataset.sulo][0];drawSetup()});
+ el.querySelector('#su_b').onclick=()=>{if(st)o.step--,drawSetup();else finishSetup(true)};
+ el.querySelector('#su_n').onclick=()=>{if(st<N-1)o.step++,drawSetup();else finishSetup(false)}}
+async function finishSetup(skipped){const o=S.su,el=$('#setup');
+ const setup=skipped?Object.assign({skipped:true,at:Date.now()},SU().cats?SU():{}):{household:o.household,linkV2:o.linkV2,cats:o.cats,lowAt:o.lowAt,at:Date.now()};
+ if(skipped&&!('linkV2' in setup))setup.linkV2=true;
+ el&&el.remove();S.su=null;await guard(()=>S.store.setMeta('state',Object.assign({},M().state,{setup})),skipped?'Setup skipped. You can run it from Settings.':'Pantry set up');S.v2s={};runSync()}
 /* ---------- boot ---------- */
 async function ensureStart(){if(!(M().state&&M().state.startDate))await S.store.setMeta('state',Object.assign({},M().state,{startDate:iso(new Date()),createdAt:Date.now(),lastProcessed:0}))}
-async function useLocal(){localStorage.setItem('pantry:mode','local');S.store=STORE.Local();await S.store.load();await ensureStart();render();runSync()}
+async function useLocal(){localStorage.setItem('pantry:mode','local');S.store=STORE.Local();await S.store.load();await ensureStart();render();if(needsSetup())setupFlow();else runSync()}
 async function useCloud(user){const prev=S.store&&S.store.kind==='local'?S.store:null;S.booting=true;S.store=null;render();
  try{const st=STORE.Cloud({uid:user.uid,email:user.email,displayName:user.displayName});await st.load();S.store=st;localStorage.setItem('pantry:mode','cloud');S.booting=false;S.signedOutNote=false;S.loadErr='';
   await ensureStart();const lt=prev&&Object.values(prev.data().items);
   if(lt&&lt.length&&!Object.keys(D().items).length&&await pop({title:`Copy ${lt.length} item${lt.length>1?'s':''} to your account?`,msg:'Your items and food links on this device will be added to your account. History stays on this device.',ok:'Copy',cancel:'Not now'})){
    for(const it of lt){await S.store.putItem(Object.assign({},it,{qty:0}));if(+it.qty>0)await S.store.adjust({id:'m_'+uid(),itemId:it.id,setTo:+it.qty,reason:'manual',note:'Copied from this device'})}
    await S.store.setMeta('links',Object.assign({},prev.data().meta.links,M().links));toast('Copied to your account')}
-  render();runSync()}
+  render();if(needsSetup())setupFlow();else runSync()}
  catch(e){console.warn(e);S.booting=false;S.loadErr=STORE.errMsg(e);S.store=prev;render();
   pop({title:'Couldn’t open your cloud pantry',msg:esc(S.loadErr)+(/denied/.test(S.loadErr)?'<br><br>The Firestore security rules don’t allow the pantry yet. Until that rule is added you can keep using this device only.':''),cancel:null})}}
 async function boot(){applyTheme();const mode=localStorage.getItem('pantry:mode');

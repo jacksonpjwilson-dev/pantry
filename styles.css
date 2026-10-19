@@ -126,3 +126,4 @@ label.f{display:block;font-size:13px;color:var(--muted);margin:12px 0 4px;font-w
  body{position:relative;margin:16px auto;height:min(932px,calc(100vh - 32px));width:min(430px,calc(min(932px,100vh - 32px)*.462));transform:translateZ(0);overflow:hidden;border-radius:44px;box-shadow:0 0 0 10px #0d0d0f,0 0 0 11px #3a3a3c,0 30px 80px rgba(0,0,0,.45)}
  #toast{position:absolute}.sheet-bg,.pop-bg{position:absolute}}
 input[type=checkbox]{accent-color:var(--accent)}
+#setup{z-index:70}
