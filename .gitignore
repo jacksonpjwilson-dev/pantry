@@ -1,0 +1,12 @@
+# never commit keys or credentials
+*.key.json
+*-sa.json
+*service-account*.json
+serviceAccount*.json
+firebase-adminsdk*.json
+.env
+.env.*
+secrets/
+tools/node_modules/
+node_modules/
+tools/test-out/
