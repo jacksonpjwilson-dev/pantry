@@ -46,12 +46,15 @@ function Cloud(user){const uid=user.uid,root=()=>fb.db.collection('pantry').doc(
    if(!ent)return false;d.ledger[uidr]=ent;if(d.ledger[lid])d.ledger[lid].undone=true;d.items[it2.id]=it2;return true},
   async setMeta(name,val){await col('meta').doc(name).set(val);d.meta[name]=val},
   async readV2(){const s=await fb.db.collection('logbookV2').doc(uid).get();return s.exists?PE.readV2Cloud(s.data()):null}}}
-const errMsg=e=>{const c=e&&e.code||'';return /permission/.test(c)?'Cloud access denied. The Firestore rules need the pantry rule (see Settings).':/unavailable|network/.test(c)?'You look offline. Try again when you have a connection.':/wrong-password|invalid-credential|user-not-found|invalid-login/.test(c)?'That email and password don’t match. If you signed up with Google, close this and tap Sign in with Google. Or tap Forgot password.':/popup-blocked/.test(c)?'Your browser blocked the Google window. Tap Continue with Google again.':/email-already/.test(c)?'That email already has an account. Sign in instead.':/weak-password/.test(c)?'Use at least 6 characters.':/invalid-email/.test(c)?'That email doesn’t look right.':/popup-closed|cancelled-popup/.test(c)?'Sign-in was cancelled.':(e&&e.message)||String(e)};
+const errMsg=e=>{const c=e&&e.code||'';return /permission/.test(c)?'Cloud access denied. The Firestore rules need the pantry rule (see Settings).':/unavailable|network/.test(c)?'You look offline. Try again when you have a connection.':/wrong-password|invalid-credential|user-not-found|invalid-login/.test(c)?'That email and password don’t match. If you signed up with Google, close this and tap Sign in with Google. Or tap Forgot password.':/not-ready/.test(c)?'Getting Google ready, tap again':/popup-blocked/.test(c)?'Your browser blocked the Google window. Tap Sign in with Google again.':/email-already/.test(c)?'That email already has an account. Sign in instead.':/weak-password/.test(c)?'Use at least 6 characters.':/invalid-email/.test(c)?'That email doesn’t look right.':/popup-closed|cancelled-popup/.test(c)?'Sign-in was cancelled.':(e&&e.message)||String(e)};
+let prepP=null;function prepare(){if(fb)return Promise.resolve(fb);if(!prepP)prepP=init().catch(e=>{prepP=null;console.warn('preload',e)});return prepP} /* load SDKs + auth before any Google tap */
 window.STORE={Local,Cloud,init,whenAuthReady,errMsg,
  google(){ /* popup opened inside the tap; never a redirect on iPhone/iPad (Safari blocks the cross-site storage a redirect needs, so you land back signed out) */
   const ios=/iP(hone|ad|od)/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
   const go=()=>{const p=new firebase.auth.GoogleAuthProvider();p.setCustomParameters({prompt:'select_account'});return fb.auth.signInWithPopup(p).catch(e=>{if(/popup-blocked|operation-not-supported/.test(e.code||'')&&!ios)return fb.auth.signInWithRedirect(p);throw e})};
-  return fb?go():init().then(go)},
+  if(fb)return go(); /* fb ready: popup opens synchronously inside the tap */
+  prepare();const e=new Error('Getting Google ready, tap again');e.code='app/not-ready';return Promise.reject(e)}, /* never open the popup after an async load: iOS Safari blocks it (Bugsy) */
+ prepare,
  async email(email,pass,create){await init();return create?fb.auth.createUserWithEmailAndPassword(email,pass):fb.auth.signInWithEmailAndPassword(email,pass)},
  async reset(email){await init();return fb.auth.sendPasswordResetEmail(email)},
  async signOut(){if(fb)await fb.auth.signOut()},

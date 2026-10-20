@@ -1,6 +1,6 @@
 /* Pantry app (p1). Widget-home style matching Logbook v2. */
 (function(){
-const VERSION='p3',LOGBOOK_URL='https://jacksonpjwilson-dev.github.io/logbook-v2/preview-widget/';
+const VERSION='p4',LOGBOOK_URL='https://jacksonpjwilson-dev.github.io/logbook-v2/preview-widget/';
 const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const iso=d=>{const x=new Date(d);x.setMinutes(x.getMinutes()-x.getTimezoneOffset());return x.toISOString().slice(0,10)};
@@ -291,6 +291,7 @@ async function useCloud(user){const prev=S.store&&S.store.kind==='local'?S.store
  catch(e){console.warn(e);S.booting=false;S.loadErr=STORE.errMsg(e);S.store=prev;render();
   pop({title:'Couldn’t open your cloud pantry',msg:esc(S.loadErr)+(/denied/.test(S.loadErr)?'<br><br>The Firestore security rules don’t allow the pantry yet. Until that rule is added you can keep using this device only.':''),cancel:null})}}
 async function boot(){applyTheme();const mode=localStorage.getItem('pantry:mode');
+ if(mode!=='cloud')STORE.prepare(); /* welcome screen + this-device-only mode: preload Firebase so the first Google tap opens the popup in the gesture (Bugsy) */
  if(mode==='local')return useLocal();
  if(mode==='cloud'){S.booting=true;render();try{const u=await STORE.whenAuthReady();if(u)return useCloud(u);S.signedOutNote=true}catch(e){S.signedOutNote=true;console.warn(e)}S.booting=false}
  render()}
