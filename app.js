@@ -1,6 +1,6 @@
 /* Pantry app (p1). Widget-home style matching Logbook v2. */
 (function(){
-const VERSION='p2',LOGBOOK_URL='https://jacksonpjwilson-dev.github.io/logbook-v2/preview-widget/';
+const VERSION='p3',LOGBOOK_URL='https://jacksonpjwilson-dev.github.io/logbook-v2/preview-widget/';
 const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const iso=d=>{const x=new Date(d);x.setMinutes(x.getMinutes()-x.getTimezoneOffset());return x.toISOString().slice(0,10)};
