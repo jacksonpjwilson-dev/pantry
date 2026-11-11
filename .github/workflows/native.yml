@@ -1,0 +1,18 @@
+name: Native iOS
+on:
+  push:
+    branches: ['native/**']
+  pull_request:
+    paths: ['native/**', '.github/workflows/native.yml']
+permissions:
+  contents: read
+jobs:
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Core tests
+        run: swift test --package-path native
+      - name: Build iOS and widget simulator targets
+        run: xcodebuild -project native/Pantry.xcodeproj -scheme Pantry -sdk iphonesimulator -configuration Debug -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build

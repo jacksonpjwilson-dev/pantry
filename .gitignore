@@ -10,3 +10,9 @@ secrets/
 tools/node_modules/
 node_modules/
 tools/test-out/
+
+# Native build and personal provisioning
+native/.build/
+native/DerivedData/
+**/xcuserdata/
+native/Pantry/GoogleService-Info.plist

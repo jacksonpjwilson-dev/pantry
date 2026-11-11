@@ -1,0 +1,60 @@
+import SwiftUI
+import WidgetKit
+
+struct Snapshot: TimelineEntry {
+    var date: Date
+    var low: Int
+    var shopping: Int
+    var expiry: Int
+    var inbox: Int
+    var updated: Date?
+}
+struct Provider: TimelineProvider {
+    func placeholder(in context: Context) -> Snapshot { Snapshot(date: Date(), low: 0, shopping: 0, expiry: 0, inbox: 0, updated: nil) }
+    func getSnapshot(in context: Context, completion: @escaping (Snapshot) -> Void) { completion(read()) }
+    func getTimeline(in context: Context, completion: @escaping (Timeline<Snapshot>) -> Void) { completion(Timeline(entries: [read()], policy: .after(Date().addingTimeInterval(1800)))) }
+    func read() -> Snapshot {
+        let defaults = UserDefaults(suiteName: "group.dev.jacksonwilson.pantry")
+        return Snapshot(date: Date(), low: defaults?.integer(forKey: "low") ?? 0, shopping: defaults?.integer(forKey: "shopping") ?? 0, expiry: defaults?.integer(forKey: "expiry") ?? 0, inbox: defaults?.integer(forKey: "inbox") ?? 0, updated: defaults?.object(forKey: "updated") as? Date)
+    }
+}
+struct Overview: View {
+    var entry: Snapshot
+    var kind: String
+    @Environment(\.widgetFamily) var family
+    var count: Int { kind == "shopping" ? entry.shopping : kind == "expiry" ? entry.expiry : kind == "inbox" ? entry.inbox : entry.low }
+    var title: String { kind == "shopping" ? "To buy" : kind == "expiry" ? "Dates soon" : kind == "inbox" ? "To link" : "Low stock" }
+    var icon: String { kind == "shopping" ? "cart" : kind == "expiry" ? "calendar" : kind == "inbox" ? "link" : "leaf" }
+    var body: some View {
+        Group {
+            if family == .accessoryInline { Text("\(title): \(count)") }
+            else if family == .accessoryCircular { Gauge(value: Double(count), in: 0...Double(max(1, count))) { Image(systemName: icon) } currentValueLabel: { Text("\(count)") } }
+            else {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label(title, systemImage: icon).font(.headline)
+                    Text(entry.updated == nil ? "—" : "\(count)").font(.largeTitle.bold())
+                    if family == .systemMedium || family == .systemLarge { Text("\(entry.low) low · \(entry.shopping) to buy"); Text("\(entry.expiry) dates soon · \(entry.inbox) to link") }
+                    if let updated = entry.updated { Text(updated, style: .relative).font(.caption).foregroundStyle(.secondary) }
+                    else { Text("Open Pantry to update").font(.caption) }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }.containerBackground(.fill.tertiary, for: .widget).widgetURL(URL(string: "pantry://\(kind == "shopping" ? "shopping" : kind == "inbox" ? "inbox" : "inventory")"))
+    }
+}
+struct CountWidget: Widget {
+    var kind: String
+    var title: String
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: "pantry." + kind, provider: Provider()) { entry in Overview(entry: entry, kind: kind) }
+            .configurationDisplayName(title).description("Cached Pantry counts. Open the app to synchronize.")
+            .supportedFamilies([.systemSmall, .systemMedium, .systemLarge, .accessoryCircular, .accessoryRectangular, .accessoryInline])
+    }
+}
+@main struct PantryWidgetBundle: WidgetBundle {
+    var body: some Widget {
+        CountWidget(kind: "low", title: "Low stock")
+        CountWidget(kind: "shopping", title: "Shopping")
+        CountWidget(kind: "expiry", title: "Recorded dates")
+        CountWidget(kind: "inbox", title: "Link inbox")
+    }
+}
