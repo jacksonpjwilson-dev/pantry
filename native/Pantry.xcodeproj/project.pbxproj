@@ -2,8 +2,6 @@
 {archiveVersion = 1; classes = {}; objectVersion = 56; objects = {
 A5900807F5D50D8B46F3AD31 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Pantry/BarcodeScanner.swift"; sourceTree = "<group>";};
 48020CC57A7EBF989F23A8AF = {isa = PBXBuildFile; fileRef = A5900807F5D50D8B46F3AD31;};
-D3943B25352A973A1572574D = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Pantry/LogbookAdapter.swift"; sourceTree = "<group>";};
-39679F01704FF03DE69C9C92 = {isa = PBXBuildFile; fileRef = D3943B25352A973A1572574D;};
 1624959818BFC8E21BD68E26 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Pantry/PantryApp.swift"; sourceTree = "<group>";};
 5D9E5C78E95F4FC7023894A6 = {isa = PBXBuildFile; fileRef = 1624959818BFC8E21BD68E26;};
 48DF55C7634668C1C21B9E7C = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Pantry/PantryIntents.swift"; sourceTree = "<group>";};
@@ -14,6 +12,8 @@ F6100F4198DF0530CC303F4D = {isa = PBXBuildFile; fileRef = EA50F351B6E7D459D887BA
 AEF9626D6EA8BD8942821972 = {isa = PBXBuildFile; fileRef = 01B3192D40EFFB5504A5A846;};
 99F9B1A1326C208FBA4B89F5 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Pantry/ShoppingSession.swift"; sourceTree = "<group>";};
 DADD4310F6D31E481138297C = {isa = PBXBuildFile; fileRef = 99F9B1A1326C208FBA4B89F5;};
+441A99F185CE274E3EE2696A = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Pantry/TelemetryAdapter.swift"; sourceTree = "<group>";};
+C05B94A7CECB29EA3B0AD0C5 = {isa = PBXBuildFile; fileRef = 441A99F185CE274E3EE2696A;};
 318802716FC716B1F0F21A85 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Pantry/Views.swift"; sourceTree = "<group>";};
 B5184B9A4D4B2C254B7EE6B5 = {isa = PBXBuildFile; fileRef = 318802716FC716B1F0F21A85;};
 4C68E967FF3E28734E36B708 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Pantry/WatchBridge.swift"; sourceTree = "<group>";};
@@ -22,6 +22,8 @@ D1EF7823B2B949E2EC3459AA = {isa = PBXFileReference; lastKnownFileType = sourceco
 21F0407DA78EF5E9F9FCE412 = {isa = PBXBuildFile; fileRef = D1EF7823B2B949E2EC3459AA;};
 7D1B91C704267DF6C3D04865 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PantryCore/Inventory.swift"; sourceTree = "<group>";};
 CD96F556E3349C25355498E7 = {isa = PBXBuildFile; fileRef = 7D1B91C704267DF6C3D04865;};
+39F40536DD91209F834288A2 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PantryCore/LogbookAdapter.swift"; sourceTree = "<group>";};
+A90498315C95B417800ED13B = {isa = PBXBuildFile; fileRef = 39F40536DD91209F834288A2;};
 7B9A054897F43162D90CD5A1 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PantryCore/OfflineMutation.swift"; sourceTree = "<group>";};
 B8B5CC41D2B78C94AB688396 = {isa = PBXBuildFile; fileRef = 7B9A054897F43162D90CD5A1;};
 81098539F3C8988565402945 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PantryWidgets/PantryWidgets.swift"; sourceTree = "<group>";};
@@ -37,7 +39,7 @@ E6FC57C251E9E1BEC1D3C0D2 = {isa = PBXFileReference; explicitFileType = wrapper.a
 95B78F3264C6F1D1DC21BF93 = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; path = PantryWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR;};
 27DDAA7C6240B9E2D7F7077D = {isa = PBXFileReference; explicitFileType = wrapper.application; path = PantryWatch.app; sourceTree = BUILT_PRODUCTS_DIR;};
 FBDC4F23F93125BBEEAE800C = {isa = PBXGroup; children = (E6FC57C251E9E1BEC1D3C0D2, 95B78F3264C6F1D1DC21BF93, 27DDAA7C6240B9E2D7F7077D); name = Products; sourceTree = "<group>";};
-64292B1C2B2E13EAD8788FC8 = {isa = PBXGroup; children = (A5900807F5D50D8B46F3AD31, D3943B25352A973A1572574D, 1624959818BFC8E21BD68E26, 48DF55C7634668C1C21B9E7C, EA50F351B6E7D459D887BAF6, 01B3192D40EFFB5504A5A846, 99F9B1A1326C208FBA4B89F5, 318802716FC716B1F0F21A85, 4C68E967FF3E28734E36B708, D1EF7823B2B949E2EC3459AA, 7D1B91C704267DF6C3D04865, 7B9A054897F43162D90CD5A1, 81098539F3C8988565402945, 374BBB7F7DA98155335037AB, DAE7BE4A30A53E9AC51490EA, 3F56A45E107934B0645CE832, FBDC4F23F93125BBEEAE800C); sourceTree = "<group>";};
+64292B1C2B2E13EAD8788FC8 = {isa = PBXGroup; children = (A5900807F5D50D8B46F3AD31, 1624959818BFC8E21BD68E26, 48DF55C7634668C1C21B9E7C, EA50F351B6E7D459D887BAF6, 01B3192D40EFFB5504A5A846, 99F9B1A1326C208FBA4B89F5, 441A99F185CE274E3EE2696A, 318802716FC716B1F0F21A85, 4C68E967FF3E28734E36B708, D1EF7823B2B949E2EC3459AA, 7D1B91C704267DF6C3D04865, 39F40536DD91209F834288A2, 7B9A054897F43162D90CD5A1, 81098539F3C8988565402945, 374BBB7F7DA98155335037AB, DAE7BE4A30A53E9AC51490EA, 3F56A45E107934B0645CE832, FBDC4F23F93125BBEEAE800C); sourceTree = "<group>";};
 92F5E8DF5F3DB2EAB7038986 = {isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/firebase/firebase-ios-sdk.git"; requirement = {kind = upToNextMajorVersion; minimumVersion = 11.0.0;};};
 759730A97E4373F3A0EE1280 = {isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/google/GoogleSignIn-iOS.git"; requirement = {kind = upToNextMajorVersion; minimumVersion = 8.0.0;};};
 8225AD1D08601A15540ED750 = {isa = XCSwiftPackageProductDependency; package = 92F5E8DF5F3DB2EAB7038986; productName = FirebaseCore;};
@@ -48,7 +50,7 @@ EF6287A3BD69EF644FBF372A = {isa = PBXBuildFile; productRef = 958F876D7DA8C9A6B01
 24AB0352A129FD33C7C24712 = {isa = PBXBuildFile; productRef = 73722684576C46A5664AEE70;};
 25E29EA3C0D25EA28177E5C5 = {isa = XCSwiftPackageProductDependency; package = 759730A97E4373F3A0EE1280; productName = GoogleSignIn;};
 8FBCB3D0CB39DB95FC36D1A6 = {isa = PBXBuildFile; productRef = 25E29EA3C0D25EA28177E5C5;};
-2D764CD838DB39F040AA7EC4 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (48020CC57A7EBF989F23A8AF, 39679F01704FF03DE69C9C92, 5D9E5C78E95F4FC7023894A6, 64D8BF854F1BD5C701ED6591, F6100F4198DF0530CC303F4D, AEF9626D6EA8BD8942821972, DADD4310F6D31E481138297C, B5184B9A4D4B2C254B7EE6B5, BF4F599BD914150ADEA69861, CD96F556E3349C25355498E7, B8B5CC41D2B78C94AB688396, 5C6B00CC5FA74BE66908C479); runOnlyForDeploymentPostprocessing = 0; };
+2D764CD838DB39F040AA7EC4 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (48020CC57A7EBF989F23A8AF, 5D9E5C78E95F4FC7023894A6, 64D8BF854F1BD5C701ED6591, F6100F4198DF0530CC303F4D, AEF9626D6EA8BD8942821972, DADD4310F6D31E481138297C, C05B94A7CECB29EA3B0AD0C5, B5184B9A4D4B2C254B7EE6B5, BF4F599BD914150ADEA69861, CD96F556E3349C25355498E7, A90498315C95B417800ED13B, B8B5CC41D2B78C94AB688396, 5C6B00CC5FA74BE66908C479); runOnlyForDeploymentPostprocessing = 0; };
 E4CC8FC1F5258A819A1DC0F6 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (BA7139E8AF1019ADDE5B15B9, 7B2C295BF2282A527D096ADA, 0FA9444500858627AFC34677); runOnlyForDeploymentPostprocessing = 0; };
 06F5DC629BD46AAFD46564D1 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (21F0407DA78EF5E9F9FCE412); runOnlyForDeploymentPostprocessing = 0; };
 2AFA3A73EAF91A047F3FF093 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };

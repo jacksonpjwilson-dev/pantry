@@ -88,6 +88,7 @@ struct InventoryView: View {
     @State var add = false
     @State var scanner = false
     @State var barcode = ""
+    @State var scannedID: String?
     @State var filter = "all"
     var items: [InventoryItem] {
         store.state.items.filter { item in
@@ -107,9 +108,10 @@ struct InventoryView: View {
         .sheet(isPresented: $add) { ItemEditor(item: InventoryItem(name: ""), initialBarcode: barcode) }
         .sheet(isPresented: $scanner) { BarcodeScanner { code in
             scanner = false
-            if let found = store.state.items.first(where: { $0.barcode == code }) { search = found.name }
+            if let found = store.state.items.first(where: { $0.barcode == code }) { scannedID = found.id }
             else { barcode = code; add = true }
         } }
+        .navigationDestination(isPresented: Binding(get: { scannedID != nil }, set: { if !$0 { scannedID = nil } })) { if let id = scannedID { ItemDetail(id: id) } }
     }
 }
 struct ItemRow: View {
@@ -128,6 +130,7 @@ struct ItemDetail: View {
         Group {
             if let item {
                 List {
+                    if let image = item.imageURL, let url = URL(string: image), url.scheme == "https" { AsyncImage(url: url) { image in image.resizable().scaledToFit() } placeholder: { ProgressView() }.frame(maxHeight: 200) }
                     Section { ItemRow(item: item); LabeledContent("Low at", value: item.lowAt.map(number) ?? "Not set")
                         if let expiry = item.expirationDate { LabeledContent(item.dateKind ?? "Expiration", value: expiry.formatted(date: .abbreviated, time: .omitted)) }
                         if let brand = item.brand, !brand.isEmpty { LabeledContent("Brand", value: brand) }
@@ -139,6 +142,7 @@ struct ItemDetail: View {
                         HStack { Button("Bought") { change(1, reason: "bought") }; Spacer(); Button("Used") { change(-1, reason: "manual") }; Spacer(); Button("Discard") { change(-1, reason: "discarded") } }
                     }
                     Button("Add to shopping list") { Task { await store.perform { if !store.state.shopping.contains(where: { $0.itemId == id && !$0.purchased }) { store.state.shopping.append(ShoppingItem(name: item.name, itemId: id)); try await store.saveShopping() } } } }
+                    QuantityChart(itemID: id, unit: item.unit)
                     NavigationLink("Item history") { HistoryView(itemID: id) }
                     Button("Delete item", role: .destructive) { confirmDelete = true }
                 }.navigationTitle(item.name).toolbar { Button("Edit") { edit = true } }.sheet(isPresented: $edit) { ItemEditor(item: item) }
@@ -156,6 +160,8 @@ struct ItemEditor: View {
     @State var expiry = false
     @State var date = Date()
     @State var saving = false
+    @State var purchase = false
+    @State var purchaseDate = Date()
     var body: some View {
         NavigationStack {
             Form {
@@ -164,12 +170,14 @@ struct ItemEditor: View {
                     TextField("Low-stock threshold", text: $low).keyboardType(.decimalPad)
                     Text("Use quantity adjustments after saving to preserve the transaction history.").font(.caption).foregroundStyle(.secondary)
                 }
-                Section("Details") { optionalText("Barcode", $item.barcode); optionalText("Brand", $item.brand); optionalText("Location", $item.location); optionalText("Notes", $item.notes)
+                Section("Details") { optionalText("Barcode", $item.barcode); optionalText("Brand", $item.brand); optionalText("Location", $item.location); optionalText("Notes", $item.notes); optionalText("Product image HTTPS URL", $item.imageURL)
+                    Toggle("Record purchase date", isOn: $purchase)
+                    if purchase { DatePicker("Purchased", selection: $purchaseDate, displayedComponents: .date) }
                     Toggle("Record a date", isOn: $expiry)
                     if expiry { Picker("Date type", selection: Binding(get: { item.dateKind ?? "Best before" }, set: { item.dateKind = $0 })) { Text("Best before").tag("Best before"); Text("Expiration").tag("Expiration") }; DatePicker("Date", selection: $date, displayedComponents: .date); Text("Recorded dates alone do not determine food safety.").font(.caption) }
                 }
-            }.navigationTitle("Food details").toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Save") { saving = true; Task { await store.perform { guard low.isEmpty || Decimal(string: low) != nil else { throw InventoryError.invalidQuantity }; item.lowAt = low.isEmpty ? nil : Decimal(string: low); item.expirationDate = expiry ? date : nil; try await store.save(item); dismiss() }; saving = false } }.disabled(saving) } }
-        }.onAppear { low = item.lowAt.map(number) ?? ""; expiry = item.expirationDate != nil; date = item.expirationDate ?? Date(); if !initialBarcode.isEmpty { item.barcode = initialBarcode } }
+            }.navigationTitle("Food details").toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Save") { saving = true; Task { await store.perform { guard low.isEmpty || Decimal(string: low) != nil else { throw InventoryError.invalidQuantity }; item.lowAt = low.isEmpty ? nil : Decimal(string: low); item.expirationDate = expiry ? date : nil; item.purchaseDate = purchase ? purchaseDate : nil; if let image = item.imageURL, !image.isEmpty, URL(string: image)?.scheme != "https" { throw InventoryErrorBridge.message("Product images require an HTTPS URL") }; try await store.save(item); dismiss() }; saving = false } }.disabled(saving) } }
+        }.onAppear { low = item.lowAt.map(number) ?? ""; expiry = item.expirationDate != nil; date = item.expirationDate ?? Date(); purchase = item.purchaseDate != nil; purchaseDate = item.purchaseDate ?? Date(); if !initialBarcode.isEmpty { item.barcode = initialBarcode } }
     }
     func optionalText(_ name: String, _ value: Binding<String?>) -> some View { TextField(name, text: Binding(get: { value.wrappedValue ?? "" }, set: { value.wrappedValue = $0 })) }
 }
@@ -178,17 +186,21 @@ struct ShoppingView: View {
     @State var name = ""
     @State var selected: String?
     @State var confirm = false
+    @State var editing: ShoppingItem?
+    @State var list = "Groceries"
     var body: some View {
         List {
+            Picker("List", selection: $list) { ForEach(Array(Set(["Groceries"] + store.state.shopping.map(\.list))).sorted(), id: \.self) { Text($0).tag($0) } }
             Section("Shopping session") {
                 Button("Start Live Activity") { Task { await store.perform { try ShoppingSession.start(completed: store.state.shopping.filter(\.purchased).count, total: store.state.shopping.count) } } }
                 Button("Finish shopping session") { Task { await ShoppingSession.finish() } }
             }
-            Section("Add to groceries") { HStack { TextField("Item", text: $name); Button("Add", systemImage: "plus") { Task { await store.perform { guard !name.trimmingCharacters(in: .whitespaces).isEmpty else { return }; store.state.shopping.append(ShoppingItem(name: name)); name = ""; try await store.saveShopping() } } } } }
-            Section("To buy") { ForEach(store.state.shopping.filter { !$0.purchased }) { row in Button { selected = row.id; confirm = true; UIImpactFeedbackGenerator(style: .light).impactOccurred() } label: { HStack { Image(systemName: "circle"); Text(row.name); Spacer(); Text(number(row.quantity)) } } } }
+            Section("Add to groceries") { HStack { TextField("Item", text: $name); Button("Add", systemImage: "plus") { Task { await store.perform { guard !name.trimmingCharacters(in: .whitespaces).isEmpty else { return }; var row = ShoppingItem(name: name); row.list = list; store.state.shopping.append(row); name = ""; try await store.saveShopping() } } } } }
+            Section("To buy") { ForEach(store.state.shopping.filter { !$0.purchased && $0.list == list }.sorted { $0.priority > $1.priority }) { row in Button { selected = row.id; confirm = true; UIImpactFeedbackGenerator(style: .light).impactOccurred() } label: { HStack { Image(systemName: "circle"); Text(row.name); Spacer(); Text(number(row.quantity)) } }.contextMenu { Button("Edit quantity, priority or list") { editing = row } } } }
             Section("Low-stock suggestions") { ForEach(store.low.filter { item in !store.state.shopping.contains { $0.itemId == item.id && !$0.purchased } }) { item in Button("Add \(item.name)") { Task { await store.perform { store.state.shopping.append(ShoppingItem(name: item.name, itemId: item.id, quantity: max(1, (item.lowAt ?? 0) - item.qty))); try await store.saveShopping() } } } } }
             Section("Shopping history") { ForEach(store.state.shopping.filter(\.purchased)) { row in HStack { Label(row.name, systemImage: "checkmark.circle.fill"); Spacer(); Button("Reorder") { Task { await store.perform { store.state.shopping.append(ShoppingItem(name: row.name, itemId: row.itemId, quantity: row.quantity)); try await store.saveShopping() } } } } } }
         }.navigationTitle("Shopping list")
+        .sheet(item: $editing) { row in ShoppingEditor(row: row) }
         .confirmationDialog("Mark purchased", isPresented: $confirm) {
             if let id = selected { Button("Complete") { purchase(id, add: false) }; if store.state.shopping.first(where: { $0.id == id })?.itemId != nil { Button("Complete and add to inventory") { purchase(id, add: true) } } }
         } message: { Text("Inventory additions use a unique purchase ID to prevent duplicates.") }
@@ -245,6 +257,11 @@ struct SettingsView: View {
     @State var password = ""
     @State var create = false
     @State var remove = false
+    @AppStorage("autoLowShopping") var autoLowShopping = false
+    @AppStorage("notifyLow") var notifyLow = true
+    @AppStorage("notifyExpiry") var notifyExpiry = true
+    @AppStorage("quietStart") var quietStart = 22
+    @AppStorage("quietEnd") var quietEnd = 8
     var body: some View {
         Form {
             Section("Account") {
@@ -264,8 +281,48 @@ struct SettingsView: View {
                 Picker("Mode", selection: $appearance) { Text("Automatic").tag("auto"); Text("Light").tag("light"); Text("Dark").tag("dark") }
                 Picker("Colour", selection: $theme) { ForEach(Array(["Logbook Teal", "Midnight Navy & Gold", "Forest & Cream", "Sunset Coral", "Mono + Red", "Arctic", "Sand & Terracotta", "Electric Violet", "Graphite & Mint", "Aviator", "Rose & Charcoal", "Grey"].enumerated()), id: \.offset) { index, title in Text(title).tag(index) } }
             }
-            Section("Notifications") { Button("Enable low-stock and date reminders") { Task { await store.perform { try await ReminderService.configure(items: store.state.items) } } }; Text("Optional local reminders use recorded dates. Open Pantry to update reminders after cloud changes.").font(.caption) }
+            Section("Low stock") { Toggle("Automatically add low-stock suggestions", isOn: $autoLowShopping) }
+            Section("Notifications") {
+                Toggle("Low-stock reminders", isOn: $notifyLow)
+                Toggle("Recorded date reminders", isOn: $notifyExpiry)
+                Stepper("Quiet hours start: \(quietStart):00", value: $quietStart, in: 0...23)
+                Stepper("Quiet hours end: \(quietEnd):00", value: $quietEnd, in: 0...23)
+                Button("Enable low-stock and date reminders") { Task { await store.perform { try await ReminderService.configure(items: store.state.items) } } }; Text("Optional local reminders use recorded dates. Open Pantry to update reminders after cloud changes.").font(.caption) }
             Section("Privacy") { Text("No private food records are sent to telemetry. Lock Screen widgets share counts only."); Button("Remove device-only data", role: .destructive) { remove = true }.disabled(store.user != nil) }
         }.navigationTitle("Settings").confirmationDialog("Remove this device's local inventory and history?", isPresented: $remove) { Button("Remove", role: .destructive) { Task { await store.perform { try store.clearDevice() } } } }
+    }
+}
+
+struct ShoppingEditor: View {
+    @EnvironmentObject var store: PantryStore
+    @Environment(\.dismiss) var dismiss
+    @State var row: ShoppingItem
+    @State var amount = "1"
+    var body: some View {
+        NavigationStack { Form {
+            TextField("Name", text: $row.name)
+            TextField("Quantity needed", text: $amount).keyboardType(.decimalPad)
+            TextField("Category", text: $row.category)
+            TextField("List name", text: $row.list)
+            Picker("Priority", selection: $row.priority) { Text("Normal").tag(0); Text("Soon").tag(1); Text("High").tag(2) }
+        }.navigationTitle("Shopping item").toolbar {
+            Button("Cancel") { dismiss() }
+            Button("Save") { Task { await store.perform {
+                guard let quantity = Decimal(string: amount), quantity > 0, !row.name.trimmingCharacters(in: .whitespaces).isEmpty, !row.list.isEmpty else { throw InventoryError.invalidQuantity }
+                row.quantity = quantity
+                if let index = store.state.shopping.firstIndex(where: { $0.id == row.id }) { store.state.shopping[index] = row }
+                try await store.saveShopping(); dismiss()
+            } } }
+        } }.onAppear { amount = number(row.quantity) }
+    }
+}
+struct QuantityChart: View {
+    @EnvironmentObject var store: PantryStore
+    var itemID: String
+    var unit: String
+    struct Point: Identifiable { var id: String; var date: Date; var quantity: Double }
+    var points: [Point] { store.history.filter { $0["itemId"] as? String == itemID && $0["unit"] as? String == unit }.compactMap { row in guard let id = row["id"] as? String, let ts = row["ts"] as? Double, let quantity = row["qtyAfter"] as? Double else { return nil }; return Point(id: id, date: Date(timeIntervalSince1970: ts / 1000), quantity: quantity) }.sorted { $0.date < $1.date } }
+    var body: some View {
+        if points.count > 1 { Section("Recorded quantity (\(unit))") { Chart(points) { point in LineMark(x: .value("Date", point.date), y: .value(unit, point.quantity)) }.frame(height: 150).accessibilityLabel("Inventory quantity history in \(unit)") } }
     }
 }

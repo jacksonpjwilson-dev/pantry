@@ -19,6 +19,7 @@ struct DeviceState: Codable {
     var queue: [Adjustment] = []
     var mutations: [OfflineMutation]? = []
     var pendingShopping: [ShoppingItem]? = []
+    var lowEpisodes: Set<String>? = []
 }
 @MainActor final class PantryStore: ObservableObject {
     @Published var state = DeviceState()
@@ -67,6 +68,21 @@ struct DeviceState: Codable {
     }
     func persist() throws {
         guard let context else { return }
+        if UserDefaults.standard.bool(forKey: "autoLowShopping") {
+            var episodes = state.lowEpisodes ?? []
+            for item in state.items {
+                if item.status == "ok" { episodes.remove(item.id); continue }
+                if !episodes.contains(item.id) {
+                    if !state.shopping.contains(where: { $0.itemId == item.id && !$0.purchased }) {
+                        let row = ShoppingItem(name: item.name, itemId: item.id, quantity: max(1, (item.lowAt ?? 0) - item.qty))
+                        state.shopping.append(row)
+                        if user != nil { state.pendingShopping = (state.pendingShopping ?? []) + [row] }
+                    }
+                    episodes.insert(item.id)
+                }
+            }
+            state.lowEpisodes = episodes
+        }
         state.ledgerData = try JSONSerialization.data(withJSONObject: history)
         state.metaData = try JSONSerialization.data(withJSONObject: meta)
         let data = try JSONEncoder().encode(state)

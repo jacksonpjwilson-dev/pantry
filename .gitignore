@@ -16,3 +16,5 @@ native/.build/
 native/DerivedData/
 **/xcuserdata/
 native/Pantry/GoogleService-Info.plist
+native/emulator/*-debug.log
+native/emulator/.firebase/

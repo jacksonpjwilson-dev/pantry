@@ -1,4 +1,5 @@
 import ActivityKit
+import Foundation
 
 struct ShoppingActivity: ActivityAttributes {
     struct ContentState: Codable, Hashable {

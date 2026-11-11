@@ -1,4 +1,5 @@
 import Foundation
+#if canImport(JavaScriptCore)
 import JavaScriptCore
 
 /// Reuses the audited production parser and identifiers. Never accesses Logbook writes.
@@ -8,8 +9,9 @@ struct LogbookPlan {
 }
 @MainActor final class LegacyLogbookAdapter {
     private let context: JSContext
-    init() {
+    init(script: String? = nil) {
         context = JSContext()!
+        if let script { context.evaluateScript(script); return }
         if let url = Bundle.main.url(forResource: "engine", withExtension: "js"), let script = try? String(contentsOf: url) { context.evaluateScript(script) }
     }
     func plan(document: [String: Any], items: [String: Any], ledger: [[String: Any]], meta: [String: [String: Any]]) throws -> LogbookPlan {
@@ -39,6 +41,8 @@ struct LogbookPlan {
         let foods = v2.forProperty("foods")?.toDictionary() as? [String: Any] ?? [:]
         for op in ops where op["t"] as? String == "adjust" && op["reason"] as? String == "eaten" {
             guard let source = op["source"] as? [String: Any] else { continue }
+            guard let delta = op["delta"] as? NSNumber, delta.doubleValue.isFinite, delta.doubleValue <= 0,
+                  let quantity = source["q"] as? NSNumber, quantity.doubleValue.isFinite, quantity.doubleValue >= 0 else { throw InventoryErrorBridge.message("Logbook contains an invalid quantity; no planned operations were applied") }
             let fid = String(describing: source["fid"] ?? "")
             let link = meta["links"]?[fid] as? [String: Any] ?? [:]
             let food = foods[fid] as? [String: Any] ?? [:]
@@ -50,6 +54,8 @@ struct LogbookPlan {
         return LogbookPlan(operations: ops, cursor: result["cursor"] as? Double ?? 0)
     }
 }
+
+#endif
 enum InventoryErrorBridge: LocalizedError {
     case message(String)
     var errorDescription: String? { if case .message(let text) = self { return text }; return nil }
