@@ -1,5 +1,6 @@
 import SwiftUI
 import WidgetKit
+import AppIntents
 
 struct Snapshot: TimelineEntry {
     var date: Date
@@ -8,6 +9,7 @@ struct Snapshot: TimelineEntry {
     var expiry: Int
     var inbox: Int
     var updated: Date?
+    var detail: WidgetSnapshot? = nil
 }
 struct Provider: TimelineProvider {
     func placeholder(in context: Context) -> Snapshot { Snapshot(date: Date(), low: 0, shopping: 0, expiry: 0, inbox: 0, updated: nil) }
@@ -15,15 +17,15 @@ struct Provider: TimelineProvider {
     func getTimeline(in context: Context, completion: @escaping (Timeline<Snapshot>) -> Void) { completion(Timeline(entries: [read()], policy: .after(Date().addingTimeInterval(1800)))) }
     func read() -> Snapshot {
         let defaults = UserDefaults(suiteName: "group.dev.jacksonwilson.pantry")
-        return Snapshot(date: Date(), low: defaults?.integer(forKey: "low") ?? 0, shopping: defaults?.integer(forKey: "shopping") ?? 0, expiry: defaults?.integer(forKey: "expiry") ?? 0, inbox: defaults?.integer(forKey: "inbox") ?? 0, updated: defaults?.object(forKey: "updated") as? Date)
+        return Snapshot(date: Date(), low: defaults?.integer(forKey: "low") ?? 0, shopping: defaults?.integer(forKey: "shopping") ?? 0, expiry: defaults?.integer(forKey: "expiry") ?? 0, inbox: defaults?.integer(forKey: "inbox") ?? 0, updated: defaults?.object(forKey: "updated") as? Date, detail: WidgetStorage.snapshot())
     }
 }
 struct Overview: View {
     var entry: Snapshot
     var kind: String
     @Environment(\.widgetFamily) var family
-    var count: Int { kind == "shopping" ? entry.shopping : kind == "expiry" ? entry.expiry : kind == "inbox" ? entry.inbox : entry.low }
-    var title: String { kind == "shopping" ? "To buy" : kind == "expiry" ? "Dates soon" : kind == "inbox" ? "To link" : "Low stock" }
+    var count: Int { kind == "shopping" ? entry.shopping : kind == "expiry" ? entry.expiry : kind == "inbox" ? entry.inbox : kind == "recent" ? entry.detail?.recentlyEaten.count ?? 0 : entry.low }
+    var title: String { kind == "shopping" ? "To buy" : kind == "expiry" ? "Dates soon" : kind == "inbox" ? "To link" : kind == "recent" ? "Recently eaten" : "Low stock" }
     var icon: String { kind == "shopping" ? "cart" : kind == "expiry" ? "calendar" : kind == "inbox" ? "link" : "leaf" }
     var body: some View {
         Group {
@@ -33,7 +35,18 @@ struct Overview: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Label(title, systemImage: icon).font(.headline)
                     Text(entry.updated == nil ? "—" : "\(count)").font(.largeTitle.bold())
-                    if family == .systemMedium || family == .systemLarge { Text("\(entry.low) low · \(entry.shopping) to buy"); Text("\(entry.expiry) dates soon · \(entry.inbox) to link") }
+                    if family == .systemMedium || family == .systemLarge {
+                        if let snapshot = entry.detail {
+                            let rows = kind == "shopping" ? snapshot.shopping : kind == "expiry" ? snapshot.expiry : kind == "recent" ? snapshot.recentlyEaten : snapshot.low
+                            ForEach(Array(rows.prefix(family == .systemLarge ? 4 : 2))) { row in
+                                HStack {
+                                    if kind == "shopping" { Button(intent: WidgetPurchaseIntent(shoppingID: row.id, accountTag: snapshot.accountTag)) { Image(systemName: "circle") }.buttonStyle(.plain) }
+                                    Text(row.title).lineLimit(1); Spacer(); Text(row.detail).font(.caption)
+                                }
+                            }
+                            if family == .systemLarge { Divider(); Text("\(entry.expiry) dates soon · \(entry.shopping) to buy").font(.caption); ForEach(Array(snapshot.recentlyEaten.prefix(2))) { row in Text("Eaten: " + row.title).font(.caption).lineLimit(1) } }
+                        }
+                    }
                     if let updated = entry.updated { Text(updated, style: .relative).font(.caption).foregroundStyle(.secondary) }
                     else { Text("Open Pantry to update").font(.caption) }
                 }.frame(maxWidth: .infinity, alignment: .leading)
@@ -57,5 +70,6 @@ struct CountWidget: Widget {
         CountWidget(kind: "shopping", title: "Shopping")
         CountWidget(kind: "expiry", title: "Recorded dates")
         CountWidget(kind: "inbox", title: "Link inbox")
+        CountWidget(kind: "recent", title: "Recently eaten")
     }
 }

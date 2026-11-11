@@ -5,6 +5,7 @@ import FirebaseAuth
 import FirebaseFirestore
 import GoogleSignIn
 import WidgetKit
+import CryptoKit
 
 @Model final class LocalSnapshot {
     @Attribute(.unique) var account: String
@@ -31,9 +32,38 @@ struct DeviceState: Codable {
     @Published var user: User?
     @Published var lastSync: Date?
     @Published var route = "home"
+    @Published var intentRequest: IntentRequest?
+    @Published var requestedFilter = "all"
+    @Published var scanRequested = false
+    struct IntentRequest: Identifiable { var id = UUID(); var kind: String; var name: String; var quantity: Decimal }
+    func open(_ url: URL) {
+        let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        func value(_ key: String) -> String? { query.first { $0.name == key }?.value }
+        if url.host == "action" {
+            guard let kind = value("kind"), ["shopping", "purchase", "inventory"].contains(kind), let name = value("name"), !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let quantity = Decimal(string: value("quantity") ?? "1"), quantity > 0, !quantity.isNaN else { error = "Invalid Shortcut parameters"; return }
+            intentRequest = IntentRequest(kind: kind, name: name, quantity: quantity)
+        } else if let host = url.host, ["home", "inventory", "shopping", "inbox", "settings"].contains(host) {
+            requestedFilter = ["low", "expiry"].contains(value("filter") ?? "") ? value("filter")! : "all"
+            scanRequested = value("scan") == "true"; route = host
+        }
+    }
+    func confirmIntent(_ request: IntentRequest) async throws {
+        if request.kind == "shopping" { state.shopping.append(ShoppingItem(name: request.name, quantity: request.quantity)); try await saveShopping() }
+        if request.kind == "inventory" {
+            let matches = state.items.filter { $0.name.caseInsensitiveCompare(request.name) == .orderedSame }
+            guard matches.count == 1 else { throw InventoryErrorBridge.message("Choose a unique inventory food name") }
+            try await adjust(Adjustment(itemId: matches[0].id, delta: request.quantity, reason: "bought"))
+        }
+        if request.kind == "purchase" {
+            let matches = state.shopping.filter { !$0.purchased && $0.name.caseInsensitiveCompare(request.name) == .orderedSame }
+            guard matches.count == 1 else { throw InventoryErrorBridge.message("Choose a unique pending shopping item") }
+            try await purchase(matches[0].id, addInventory: false)
+        }
+    }
     private var context: ModelContext?
     private var listener: AuthStateDidChangeListenerHandle?
     private var account = "device"
+    private var accountTag: String { SHA256.hash(data: Data(account.utf8)).map { String(format: "%02x", $0) }.joined() }
     private var cloud: Firestore? { FirebaseApp.app() == nil ? nil : Firestore.firestore() }
     var configured: Bool { FirebaseApp.app() != nil }
     var inbox: [String: [String: Any]] { meta["inbox"]?.compactMapValues { $0 as? [String: Any] } ?? [:] }
@@ -51,6 +81,7 @@ struct DeviceState: Codable {
                     self.state = DeviceState(); self.history = []; self.meta = [:]; self.lastSync = nil
                     self.loadLocal(); self.status = user == nil ? "Device only" : "Pending synchronization"
                     if user != nil { await self.refresh() }
+                    await self.applyWidgetCommands()
                 }
             }
         }
@@ -64,6 +95,7 @@ struct DeviceState: Codable {
             if let saved = try snapshot() { state = try JSONDecoder().decode(DeviceState.self, from: saved.payload) }
             history = (try JSONSerialization.jsonObject(with: state.ledgerData)) as? [[String: Any]] ?? []
             meta = (try JSONSerialization.jsonObject(with: state.metaData)) as? [String: [String: Any]] ?? [:]
+            publishWidget(); WatchBridge.shared.publish(state: state)
         } catch { self.error = "Local cache could not be opened: \(error.localizedDescription)" }
     }
     func persist() throws {
@@ -321,8 +353,28 @@ struct DeviceState: Codable {
         guard user == nil else { throw InventoryErrorBridge.message("Sign out before removing device-only data") }
         state = DeviceState(); history = []; meta = [:]; try persist()
     }
+    func applyWidgetCommands() async {
+        guard let directory = try? WidgetStorage.directory(), let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else { return }
+        for file in files where file.pathExtension == "json" {
+            do {
+                let command = try JSONDecoder().decode(WidgetPurchaseCommand.self, from: Data(contentsOf: file))
+                guard command.accountTag == accountTag else { continue }
+                guard state.shopping.contains(where: { $0.id == command.shoppingID }) else { continue }
+                try await purchase(command.shoppingID, addInventory: false)
+                try FileManager.default.removeItem(at: file)
+            } catch { self.error = "Widget purchase remains pending: \(error.localizedDescription)" }
+        }
+    }
     private func publishWidget() {
-        // No food names or cloud identifiers in shared lock-screen snapshot.
+        // Home widgets receive safe display rows; accessory views show counts only.
+        let recent = history.filter { $0["reason"] as? String == "eaten" }.sorted { ($0["ts"] as? Double ?? 0) > ($1["ts"] as? Double ?? 0) }.prefix(5)
+        let snapshot = WidgetSnapshot(accountTag: accountTag,
+            low: low.map { .init(id: $0.id, title: $0.name, detail: "\(NSDecimalNumber(decimal: $0.qty)) \($0.unit)") },
+            shopping: state.shopping.filter { !$0.purchased }.map { .init(id: $0.id, title: $0.name, detail: NSDecimalNumber(decimal: $0.quantity).stringValue) },
+            expiry: expiring.map { .init(id: $0.id, title: $0.name, detail: $0.expirationDate?.formatted(date: .abbreviated, time: .omitted) ?? "Unknown") },
+            recentlyEaten: recent.map { .init(id: $0["id"] as? String ?? UUID().uuidString, title: $0["itemName"] as? String ?? "Food", detail: String(describing: $0["delta"] ?? "")) },
+            inboxCount: inbox.count, updated: Date())
+        if let data = try? JSONEncoder().encode(snapshot) { WidgetStorage.defaults?.set(data, forKey: "snapshot") }
         guard let defaults = UserDefaults(suiteName: "group.dev.jacksonwilson.pantry") else { return }
         defaults.set(low.count, forKey: "low"); defaults.set(expiring.count, forKey: "expiry"); defaults.set(inbox.count, forKey: "inbox")
         defaults.set(state.shopping.filter { !$0.purchased }.count, forKey: "shopping"); defaults.set(Date(), forKey: "updated")

@@ -10,7 +10,7 @@ import GoogleSignIn
     }
     var body: some Scene {
         WindowGroup { RootView().environmentObject(store).onOpenURL { url in
-            if !GIDSignIn.sharedInstance.handle(url), url.scheme == "pantry" { store.route = url.host ?? "home" }
+            if !GIDSignIn.sharedInstance.handle(url), url.scheme == "pantry" { store.open(url) }
         } }.modelContainer(for: LocalSnapshot.self)
     }
 }

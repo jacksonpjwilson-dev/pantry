@@ -22,8 +22,17 @@ struct RootView: View {
         }
         .tint(colors[max(0, min(theme, colors.count - 1))])
         .preferredColorScheme(appearance == "auto" ? nil : appearance == "dark" ? .dark : .light)
-        .task { store.start(context: context) }
-        .onChange(of: phase) { _, value in if value == .active { Task { await store.syncLogbook() } } }
+        .sheet(item: $store.intentRequest) { request in
+            NavigationStack { Form {
+                Text("Account: \(store.user?.email ?? "This device only")")
+                Text("\(request.name) · \(number(request.quantity))")
+                Text(request.kind == "inventory" ? "Adds quantity in the food's existing inventory unit." : request.kind == "purchase" ? "Marks the shopping item complete without adding inventory." : "Adds a shopping item.")
+                Button("Confirm") { Task { await store.perform { try await store.confirmIntent(request); store.intentRequest = nil } } }
+                Button("Cancel", role: .cancel) { store.intentRequest = nil }
+            }.navigationTitle("Shortcut action") }
+        }
+        .task { store.start(context: context); await store.applyWidgetCommands() }
+        .onChange(of: phase) { _, value in if value == .active { Task { await store.applyWidgetCommands(); await store.syncLogbook() } } }
         .alert("Pantry needs attention", isPresented: Binding(get: { store.error != nil }, set: { if !$0 { store.error = nil } })) { Button("OK") { store.error = nil } } message: { Text(store.error ?? "") }
     }
 }
@@ -105,6 +114,9 @@ struct InventoryView: View {
             if items.isEmpty { ContentUnavailableView("Your shelves are ready", systemImage: "cabinet", description: Text("Add your first food or change your filters.")) }
         }.navigationTitle("Inventory").searchable(text: $search)
         .toolbar { Button("Scan", systemImage: "barcode.viewfinder") { scanner = true }; Button("Add", systemImage: "plus") { barcode = ""; add = true } }
+        .onAppear { if filter == "all" { filter = store.requestedFilter }; if store.scanRequested { scanner = true; store.scanRequested = false } }
+        .onChange(of: store.requestedFilter) { _, value in filter = value }
+        .onChange(of: store.scanRequested) { _, value in if value { scanner = true; store.scanRequested = false } }
         .sheet(isPresented: $add) { ItemEditor(item: InventoryItem(name: ""), initialBarcode: barcode) }
         .sheet(isPresented: $scanner) { BarcodeScanner { code in
             scanner = false
