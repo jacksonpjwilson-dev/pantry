@@ -10,16 +10,20 @@ def obj(name, value):
 def quote(s): return '"' + s.replace('"', '\\"') + '"'
 def arr(values): return '(' + ', '.join(values) + ')'
 def settings(values): return '{' + ' '.join(k + ' = ' + quote(str(v)) + ';' for k,v in values.items()) + '}'
-app = ident('app'); widget = ident('widget')
-files=[]; appbuild=[]; widgetbuild=[]; resources=[]
-for folder in ['Pantry','PantryCore','PantryWidgets']:
+app = ident('app'); widget = ident('widget'); watch = ident('watch')
+files=[]; appbuild=[]; widgetbuild=[]; watchbuild=[]; resources=[]
+for folder in ['Pantry','PantryCore','PantryWidgets','PantryWatch','Shared']:
     for p in sorted((root/folder).glob('*')):
         if p.suffix not in ['.swift','.js']: continue
         path = str(p.relative_to(root))
         ref = obj(path, '{isa = PBXFileReference; lastKnownFileType = '+ ('sourcecode.swift' if p.suffix=='.swift' else 'sourcecode.javascript') + '; path = '+quote(path)+'; sourceTree = "<group>";}')
         build = obj('build'+path, '{isa = PBXBuildFile; fileRef = '+ref+';}')
         files.append(ref)
-        if folder=='PantryWidgets': widgetbuild.append(build)
+        if folder=='Shared':
+            appbuild.append(build)
+            widgetbuild.append(obj('widgetbuild'+path, '{isa = PBXBuildFile; fileRef = '+ref+';}'))
+        elif folder=='PantryWatch': watchbuild.append(build)
+        elif folder=='PantryWidgets': widgetbuild.append(build)
         elif p.suffix=='.js': resources.append(build)
         else: appbuild.append(build)
 plist = root/'Pantry'/'GoogleService-Info.plist'
@@ -28,7 +32,8 @@ if plist.exists():
     resources.append(obj('buildplist','{isa = PBXBuildFile; fileRef = '+ref+';}'))
 appProduct=obj('appproduct','{isa = PBXFileReference; explicitFileType = wrapper.application; path = Pantry.app; sourceTree = BUILT_PRODUCTS_DIR;}')
 widgetProduct=obj('widgetproduct','{isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; path = PantryWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR;}')
-products=obj('products','{isa = PBXGroup; children = '+arr([appProduct,widgetProduct])+'; name = Products; sourceTree = "<group>";}')
+watchProduct=obj('watchproduct','{isa = PBXFileReference; explicitFileType = wrapper.application; path = PantryWatch.app; sourceTree = BUILT_PRODUCTS_DIR;}')
+products=obj('products','{isa = PBXGroup; children = '+arr([appProduct,widgetProduct,watchProduct])+'; name = Products; sourceTree = "<group>";}')
 group=obj('group','{isa = PBXGroup; children = '+arr(files+[products])+'; sourceTree = "<group>";}')
 firebase=obj('firebase','{isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/firebase/firebase-ios-sdk.git"; requirement = {kind = upToNextMajorVersion; minimumVersion = 11.0.0;};}')
 google=obj('google','{isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/google/GoogleSignIn-iOS.git"; requirement = {kind = upToNextMajorVersion; minimumVersion = 8.0.0;};}')
@@ -45,6 +50,13 @@ embedbuild=obj('embedbuild','{isa = PBXBuildFile; fileRef = '+widgetProduct+'; s
 embed=phase('embed','PBXCopyFilesBuildPhase',[embedbuild],'dstPath = ""; dstSubfolderSpec = 13; name = "Embed App Extensions";')
 proxy=obj('proxy','{isa = PBXContainerItemProxy; containerPortal = '+ident('project')+'; proxyType = 1; remoteGlobalIDString = '+widget+'; remoteInfo = PantryWidgets;}')
 dep=obj('dependency','{isa = PBXTargetDependency; target = '+widget+'; targetProxy = '+proxy+';}')
+watchsource=phase('watchsources','PBXSourcesBuildPhase',watchbuild)
+watchresource=phase('watchresources','PBXResourcesBuildPhase',[])
+watchframework=phase('watchframeworks','PBXFrameworksBuildPhase',[])
+watchembedbuild=obj('watchembedbuild','{isa = PBXBuildFile; fileRef = '+watchProduct+'; settings = {ATTRIBUTES = (RemoveHeadersOnCopy,);};}')
+watchembed=phase('watchembed','PBXCopyFilesBuildPhase',[watchembedbuild],'dstPath = "$(CONTENTS_FOLDER_PATH)/Watch"; dstSubfolderSpec = 16; name = "Embed Watch Content";')
+watchproxy=obj('watchproxy','{isa = PBXContainerItemProxy; containerPortal = '+ident('project')+'; proxyType = 1; remoteGlobalIDString = '+watch+'; remoteInfo = PantryWatch;}')
+watchdep=obj('watchdependency','{isa = PBXTargetDependency; target = '+watch+'; targetProxy = '+watchproxy+';}')
 base={'SWIFT_VERSION':'5.0','IPHONEOS_DEPLOYMENT_TARGET':'17.0','SDKROOT':'iphoneos','TARGETED_DEVICE_FAMILY':'1,2','CODE_SIGN_STYLE':'Automatic','CLANG_ENABLE_MODULES':'YES','SWIFT_STRICT_CONCURRENCY':'minimal','MARKETING_VERSION':'0.1.0','CURRENT_PROJECT_VERSION':'1'}
 def configlist(name,extra):
     configs=[]
@@ -55,9 +67,11 @@ def configlist(name,extra):
 projectconfig=configlist('project',{})
 appconfig=configlist('app',{'PRODUCT_NAME':'$(TARGET_NAME)','PRODUCT_BUNDLE_IDENTIFIER':'dev.jacksonwilson.pantry','INFOPLIST_FILE':'Configuration/App-Info.plist','CODE_SIGN_ENTITLEMENTS':'Configuration/Pantry.entitlements','GENERATE_INFOPLIST_FILE':'NO'})
 widgetconfig=configlist('widget',{'PRODUCT_NAME':'$(TARGET_NAME)','PRODUCT_BUNDLE_IDENTIFIER':'dev.jacksonwilson.pantry.widgets','INFOPLIST_FILE':'Configuration/Widget-Info.plist','CODE_SIGN_ENTITLEMENTS':'Configuration/Pantry.entitlements','APPLICATION_EXTENSION_API_ONLY':'YES','SKIP_INSTALL':'YES','GENERATE_INFOPLIST_FILE':'NO'})
-obj('app','{isa = PBXNativeTarget; buildConfigurationList = '+appconfig+'; buildPhases = '+arr([asource,aframework,aresource,embed])+'; dependencies = '+arr([dep])+'; name = Pantry; productName = Pantry; productReference = '+appProduct+'; productType = "com.apple.product-type.application"; packageProductDependencies = '+arr(packages)+';}')
+watchconfig=configlist('watch',{'PRODUCT_NAME':'$(TARGET_NAME)','PRODUCT_BUNDLE_IDENTIFIER':'dev.jacksonwilson.pantry.watchkitapp','INFOPLIST_FILE':'Configuration/Watch-Info.plist','SDKROOT':'watchos','SUPPORTED_PLATFORMS':'watchos watchsimulator','WATCHOS_DEPLOYMENT_TARGET':'10.0','TARGETED_DEVICE_FAMILY':'4','SKIP_INSTALL':'YES','GENERATE_INFOPLIST_FILE':'NO'})
+obj('watch','{isa = PBXNativeTarget; buildConfigurationList = '+watchconfig+'; buildPhases = '+arr([watchsource,watchframework,watchresource])+'; dependencies = (); name = PantryWatch; productName = PantryWatch; productReference = '+watchProduct+'; productType = "com.apple.product-type.application.watchapp2";}')
+obj('app','{isa = PBXNativeTarget; buildConfigurationList = '+appconfig+'; buildPhases = '+arr([asource,aframework,aresource,embed,watchembed])+'; dependencies = '+arr([dep,watchdep])+'; name = Pantry; productName = Pantry; productReference = '+appProduct+'; productType = "com.apple.product-type.application"; packageProductDependencies = '+arr(packages)+';}')
 obj('widget','{isa = PBXNativeTarget; buildConfigurationList = '+widgetconfig+'; buildPhases = '+arr([wsource,wframework,wresource])+'; dependencies = (); name = PantryWidgets; productName = PantryWidgets; productReference = '+widgetProduct+'; productType = "com.apple.product-type.app-extension";}')
-project=obj('project','{isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = YES; LastUpgradeCheck = 1600;}; buildConfigurationList = '+projectconfig+'; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; knownRegions = (en, Base); mainGroup = '+group+'; productRefGroup = '+products+'; projectDirPath = ""; projectRoot = ""; targets = '+arr([app,widget])+'; packageReferences = '+arr([firebase,google])+';}')
+project=obj('project','{isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = YES; LastUpgradeCheck = 1600;}; buildConfigurationList = '+projectconfig+'; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; knownRegions = (en, Base); mainGroup = '+group+'; productRefGroup = '+products+'; projectDirPath = ""; projectRoot = ""; targets = '+arr([app,widget,watch])+'; packageReferences = '+arr([firebase,google])+';}')
 path=root/'Pantry.xcodeproj';path.mkdir(exist_ok=True)
 (path/'project.pbxproj').write_text('// !$*UTF8*$!\n{archiveVersion = 1; classes = {}; objectVersion = 56; objects = {\n'+'\n'.join(k+' = '+v+';' for k,v in objects.items())+'\n}; rootObject = '+project+';}\n')
 schemes=path/'xcshareddata'/'xcschemes';schemes.mkdir(parents=True,exist_ok=True)

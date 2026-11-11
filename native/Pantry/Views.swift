@@ -180,6 +180,10 @@ struct ShoppingView: View {
     @State var confirm = false
     var body: some View {
         List {
+            Section("Shopping session") {
+                Button("Start Live Activity") { Task { await store.perform { try ShoppingSession.start(completed: store.state.shopping.filter(\.purchased).count, total: store.state.shopping.count) } } }
+                Button("Finish shopping session") { Task { await ShoppingSession.finish() } }
+            }
             Section("Add to groceries") { HStack { TextField("Item", text: $name); Button("Add", systemImage: "plus") { Task { await store.perform { guard !name.trimmingCharacters(in: .whitespaces).isEmpty else { return }; store.state.shopping.append(ShoppingItem(name: name)); name = ""; try await store.saveShopping() } } } } }
             Section("To buy") { ForEach(store.state.shopping.filter { !$0.purchased }) { row in Button { selected = row.id; confirm = true; UIImpactFeedbackGenerator(style: .light).impactOccurred() } label: { HStack { Image(systemName: "circle"); Text(row.name); Spacer(); Text(number(row.quantity)) } } } }
             Section("Low-stock suggestions") { ForEach(store.low.filter { item in !store.state.shopping.contains { $0.itemId == item.id && !$0.purchased } }) { item in Button("Add \(item.name)") { Task { await store.perform { store.state.shopping.append(ShoppingItem(name: item.name, itemId: item.id, quantity: max(1, (item.lowAt ?? 0) - item.qty))); try await store.saveShopping() } } } } }

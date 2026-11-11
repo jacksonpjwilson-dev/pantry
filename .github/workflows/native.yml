@@ -4,6 +4,9 @@ on:
     branches: ['native/**']
   pull_request:
     paths: ['native/**', '.github/workflows/native.yml']
+concurrency:
+  group: native-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:

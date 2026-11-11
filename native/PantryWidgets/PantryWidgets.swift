@@ -52,6 +52,7 @@ struct CountWidget: Widget {
 }
 @main struct PantryWidgetBundle: WidgetBundle {
     var body: some Widget {
+        ShoppingLiveActivity()
         CountWidget(kind: "low", title: "Low stock")
         CountWidget(kind: "shopping", title: "Shopping")
         CountWidget(kind: "expiry", title: "Recorded dates")

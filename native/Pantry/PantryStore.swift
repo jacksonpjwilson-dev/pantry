@@ -17,6 +17,8 @@ struct DeviceState: Codable {
     var metaData: Data = Data("{}".utf8)
     var shopping: [ShoppingItem] = []
     var queue: [Adjustment] = []
+    var mutations: [OfflineMutation]? = []
+    var pendingShopping: [ShoppingItem]? = []
 }
 @MainActor final class PantryStore: ObservableObject {
     @Published var state = DeviceState()
@@ -38,6 +40,7 @@ struct DeviceState: Codable {
     var expiring: [InventoryItem] { state.items.filter { Expiry.upcoming($0, now: Date(), days: 7) } }
     func start(context: ModelContext) {
         guard self.context == nil else { return }; self.context = context
+        WatchBridge.shared.store = self
         loadLocal()
         if configured {
             listener = Auth.auth().addStateDidChangeListener { [weak self] _, user in
@@ -70,6 +73,7 @@ struct DeviceState: Codable {
         if let saved = try snapshot() { saved.payload = data } else { context.insert(LocalSnapshot(account: account, payload: data)) }
         try context.save()
         publishWidget()
+        WatchBridge.shared.publish(state: state)
     }
     func perform(_ action: () async throws -> Void) async { do { try await action() } catch { self.error = error.localizedDescription } }
     private func collection(_ name: String) throws -> CollectionReference {
@@ -95,6 +99,23 @@ struct DeviceState: Codable {
         status = "Pending synchronization"
         do {
             // Transactions need network. Pending operations remain durably queued until acknowledged.
+            for mutation in state.mutations ?? [] {
+                let ref = try collection("items").document(mutation.itemID)
+                guard let fields = try JSONSerialization.jsonObject(with: mutation.payload) as? [String: Any] else { throw InventoryError.conflict }
+                if mutation.create {
+                    _ = try await cloud!.runTransaction { tx, pointer in
+                        do { if !(try tx.getDocument(ref).exists) { tx.setData(fields, forDocument: ref) }; return nil }
+                        catch { pointer?.pointee = error as NSError; return nil }
+                    }
+                } else { try await ref.setData(fields, merge: true) }
+                state.mutations?.removeAll { $0.id == mutation.id }; try persist()
+            }
+            for row in state.pendingShopping ?? [] {
+                let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+                let json = String(data: try encoder.encode(row), encoding: .utf8)!
+                try await collection("meta").document("nativeShopping").setData([row.id: json], merge: true)
+                state.pendingShopping?.removeAll { $0.id == row.id }; try persist()
+            }
             for op in state.queue { try await cloudAdjust(op, source: nil, note: "Queued manual operation") }
             state.queue = []; try persist()
             let items = try await collection("items").getDocuments(source: .server)
@@ -103,7 +124,12 @@ struct DeviceState: Codable {
             state.items = items.documents.map { item($0.documentID, raw: $0.data()) }
             history = ledger.documents.map { $0.data().merging(["id": $0.documentID]) { _, new in new } }
             meta = Dictionary(uniqueKeysWithValues: metadata.documents.map { ($0.documentID, $0.data()) })
-            if let shoppingData = meta["nativeShopping"]?["payload"] as? String, let data = shoppingData.data(using: .utf8) { state.shopping = try JSONDecoder().decode([ShoppingItem].self, from: data) }
+            if let rows = meta["nativeShopping"] {
+                state.shopping = try rows.filter { $0.key != "payload" }.compactMap { _, value in
+                    guard let json = value as? String, let data = json.data(using: .utf8) else { return nil }
+                    return try JSONDecoder().decode(ShoppingItem.self, from: data)
+                }.sorted { $0.name < $1.name }
+            }
             status = "Connected · Logbook not checked"; try persist()
         } catch { status = "Stale · offline or access denied"; self.error = error.localizedDescription }
     }
@@ -112,22 +138,18 @@ struct DeviceState: Codable {
         if user != nil {
             // Editing metadata must never overwrite quantity updated concurrently on another device.
             var fields = wire(it); fields.removeValue(forKey: "id"); fields.removeValue(forKey: "qty")
-            let ref = try collection("items").document(it.id)
-            if state.items.contains(where: { $0.id == it.id }) { try await ref.setData(fields, merge: true) }
-            else {
-                fields["qty"] = 0
-                let initial = fields
-                _ = try await cloud!.runTransaction { tx, pointer in
-                    do { if try tx.getDocument(ref).exists { throw InventoryError.conflict }; tx.setData(initial, forDocument: ref); return nil }
-                    catch { pointer?.pointee = error as NSError; return nil }
-                }
-            }
+            let creating = !state.items.contains(where: { $0.id == it.id })
+            if creating { fields["qty"] = 0 }
+            let mutation = OfflineMutation(itemID: it.id, payload: try JSONSerialization.data(withJSONObject: fields), create: creating)
+            state.mutations = (state.mutations ?? []) + [mutation]
         }
         if let index = state.items.firstIndex(where: { $0.id == it.id }) { let qty = state.items[index].qty; state.items[index] = it; state.items[index].qty = qty }
         else { var zero = it; zero.qty = 0; state.items.append(zero) }
         try persist()
+        if user != nil { await refresh() }
     }
     func delete(_ id: String) async throws {
+        guard !state.queue.contains(where: { $0.itemId == id }), !(state.mutations ?? []).contains(where: { $0.itemID == id }) else { throw InventoryErrorBridge.message("Synchronize pending changes before deleting this item") }
         if user != nil { try await collection("items").document(id).delete() }
         state.items.removeAll { $0.id == id }; try persist() // Historical ledger deliberately retained.
     }
@@ -135,8 +157,7 @@ struct DeviceState: Codable {
         guard !op.delta.isNaN, state.items.contains(where: { $0.id == op.itemId }) else { throw InventoryError.invalidQuantity }
         if user != nil {
             if !state.queue.contains(where: { $0.id == op.id }) { state.queue.append(op); try persist() }
-            try await cloudAdjust(op, source: nil, note: "")
-            state.queue.removeAll { $0.id == op.id }; try persist(); await refresh()
+            await refresh() // Offline operations remain queued and survive termination.
         } else { try localAdjust(op, source: nil, note: "") }
     }
     private func localAdjust(_ op: Adjustment, source: [String: Any]?, note: String) throws {
@@ -154,7 +175,12 @@ struct DeviceState: Codable {
         let lr = try collection("ledger").document(op.id), ir = try collection("items").document(op.itemId)
         _ = try await cloud!.runTransaction { tx, pointer in
             do {
-                if try tx.getDocument(lr).exists { return nil }
+                let prior = try tx.getDocument(lr)
+                if let priorRow = prior.data() {
+                    guard priorRow["itemId"] as? String == op.itemId else { throw InventoryError.conflict }
+                    if let key = source?["key"] as? String, let priorSource = priorRow["source"] as? [String: Any], priorSource["key"] as? String != key { throw InventoryError.conflict }
+                    return nil
+                }
                 let snap = try tx.getDocument(ir); guard let raw = snap.data() else { throw InventoryError.missingItem }
                 let before = Decimal(string: (raw["qty"] as? NSNumber)?.stringValue ?? "0") ?? 0
                 let after = try op.apply(to: before).after
@@ -236,8 +262,18 @@ struct DeviceState: Codable {
         }; try persist()
     }
     func saveShopping() async throws {
-        if user != nil { try await setMeta("nativeShopping", fields: ["payload": String(data: JSONEncoder().encode(state.shopping), encoding: .utf8)!]) }
+        if user != nil {
+            let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+            for row in state.shopping {
+                let json = String(data: try encoder.encode(row), encoding: .utf8)!
+                if meta["nativeShopping"]?[row.id] as? String != json {
+                    state.pendingShopping?.removeAll { $0.id == row.id }
+                    state.pendingShopping = (state.pendingShopping ?? []) + [row]
+                }
+            }
+        }
         try persist()
+        if user != nil { await refresh() }
     }
     func purchase(_ id: String, addInventory: Bool) async throws {
         guard let i = state.shopping.firstIndex(where: { $0.id == id }) else { return }
@@ -249,6 +285,7 @@ struct DeviceState: Codable {
         }
         if let index = state.shopping.firstIndex(where: { $0.id == id }) { state.shopping[index].purchased = true }
         try await saveShopping()
+        await ShoppingSession.update(completed: state.shopping.filter(\.purchased).count, total: state.shopping.count)
     }
     func email(_ email: String, password: String, create: Bool) async throws {
         guard configured else { throw InventoryErrorBridge.message("Install the iOS GoogleService-Info.plist first") }
@@ -263,7 +300,7 @@ struct DeviceState: Codable {
         guard let token = result.user.idToken?.tokenString else { throw InventoryErrorBridge.message("Missing Google identity token") }
         _ = try await Auth.auth().signIn(with: GoogleAuthProvider.credential(withIDToken: token, accessToken: result.user.accessToken.tokenString))
     }
-    func signOut() throws { guard !busy, state.queue.isEmpty else { throw InventoryErrorBridge.message("Resolve queued operations before signing out") }; try Auth.auth().signOut() }
+    func signOut() throws { guard !busy, state.queue.isEmpty, (state.mutations ?? []).isEmpty, (state.pendingShopping ?? []).isEmpty else { throw InventoryErrorBridge.message("Resolve queued operations before signing out") }; try Auth.auth().signOut() }
     func clearDevice() throws {
         guard user == nil else { throw InventoryErrorBridge.message("Sign out before removing device-only data") }
         state = DeviceState(); history = []; meta = [:]; try persist()
