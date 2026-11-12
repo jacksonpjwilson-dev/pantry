@@ -5,6 +5,13 @@ public enum AccountScope {
     public static func cloud(_ uid: String) -> String { "cloud:" + uid }
 }
 
+public enum LogbookConnectionPolicy {
+    public static func enabled(in metadata: [String: [String: Any]]) -> Bool {
+        let setup = metadata["state"]?["setup"] as? [String: Any]
+        return setup?["linkV2"] as? Bool != false
+    }
+}
+
 public enum InventoryError: LocalizedError {
     case invalidQuantity, incompatibleUnits, missingItem, conflict, verificationRequired
     public var errorDescription: String? {

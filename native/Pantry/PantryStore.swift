@@ -78,6 +78,7 @@ struct DeviceState: Codable {
     private var account = AccountScope.device
     private var accountTag: String { SHA256.hash(data: Data(account.utf8)).map { String(format: "%02x", $0) }.joined() }
     private var cloud: Firestore? { FirebaseApp.app() == nil ? nil : Firestore.firestore() }
+    var logbookEnabled: Bool { LogbookConnectionPolicy.enabled(in: meta) }
     var configured: Bool { FirebaseApp.app() != nil }
     var inbox: [String: [String: Any]] { meta["inbox"]?.compactMapValues { $0 as? [String: Any] } ?? [:] }
     var low: [InventoryItem] { state.items.filter { $0.status != "ok" } }
@@ -322,10 +323,20 @@ struct DeviceState: Codable {
         guard scope == account else { throw InventoryError.conflict }
         meta[name] = (meta[name] ?? [:]).merging(fields) { _, new in new }; try persist()
     }
+    func setLogbookEnabled(_ enabled: Bool) async throws {
+        let scope = account; activeOperations += 1; defer { activeOperations -= 1 }
+        if user != nil { try await collection("meta").document("state").setData(["setup": ["linkV2": enabled]], merge: true) }
+        guard scope == account else { throw InventoryError.conflict }
+        var setup = meta["state"]?["setup"] as? [String: Any] ?? [:]
+        setup["linkV2"] = enabled; meta["state", default: [:]]["setup"] = setup
+        try persist()
+        if enabled { await syncLogbook() } else { status = "Logbook disconnected · link is off"; publishWidget() }
+    }
     func syncLogbook() async {
         guard !busy else { return }
         guard let uid = user?.uid, let cloud else { status = "Logbook disconnected · sign in required"; return }
         await refresh(); guard !status.hasPrefix("Stale") else { return }
+        guard logbookEnabled else { status = "Logbook disconnected · link is off"; publishWidget(); return }
         busy = true; defer { finishBusy() }
         do {
             guard meta["nativeMigration"]?["phase"] as? String != "pending" else { throw InventoryErrorBridge.message("Finish or resume the reviewed device migration before synchronizing Logbook") }

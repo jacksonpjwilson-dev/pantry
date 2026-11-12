@@ -66,6 +66,10 @@ final class LogbookTests: XCTestCase {
         ledger.append(["id":op["id"]!, "itemId":"eggs", "reason":"eaten", "delta":-2, "source":op["source"]!])
         XCTAssertTrue(try adapter.plan(document: doc([entry]), items: items, ledger: ledger, meta: meta).operations.isEmpty)
     }
+    @MainActor func testDisabledLegacyIntegrationDoesNotPlanDeductions() async throws {
+        var disabled = meta; disabled["state"] = ["setup":["linkV2":false]]
+        XCTAssertTrue(try adapter().plan(document: doc([["fid":"egg", "q":2]]), items: items, ledger: [], meta: disabled).operations.isEmpty)
+    }
     @MainActor func testUnverifiedServingIsBlocked() async throws {
         XCTAssertThrowsError(try adapter().plan(document: doc([["fid":"egg", "q":1]]), items: items, ledger: [], meta: ["links":["egg":["itemId":"eggs", "mode":"auto"]]]))
     }

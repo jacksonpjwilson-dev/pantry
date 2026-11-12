@@ -42,7 +42,8 @@ jobs:
       - name: Test offline inventory interactions
         run: |
           set -o pipefail
-          xcodebuild -project native/Pantry.xcodeproj -scheme Pantry -configuration Debug -derivedDataPath native/DerivedData -destination "id=$PANTRY_SIMULATOR" CODE_SIGNING_ALLOWED=NO test 2>&1 | tee native-uitests.log
+          mkdir -p native/TestResults
+          xcodebuild -project native/Pantry.xcodeproj -scheme Pantry -configuration Debug -derivedDataPath native/DerivedData -destination "id=$PANTRY_SIMULATOR" CODE_SIGNING_ALLOWED=NO -resultBundlePath native/TestResults/PantryUITests.xcresult test 2>&1 | tee native-uitests.log
       - name: Launch native app and capture screenshot
         run: |
           xcrun simctl boot "$PANTRY_SIMULATOR" || true
@@ -64,6 +65,7 @@ jobs:
           path: |
             native-build.log
             native-uitests.log
+            native/TestResults/PantryUITests.xcresult
             pantry-simulator.png
   firestore-rules:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false

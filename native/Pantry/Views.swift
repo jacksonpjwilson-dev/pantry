@@ -271,7 +271,7 @@ struct HistoryView: View {
                 if let shortfall = row["unfulfilled"] as? NSNumber, shortfall.doubleValue != 0 { Text("Requested change: \(row["requestedDelta"] ?? "") \(row["unit"] ?? "") · Applied: \(row["delta"] ?? "") \(row["unit"] ?? "")").font(.caption) }
                 Text(Date(timeIntervalSince1970: (row["ts"] as? Double ?? 0) / 1000).formatted()).font(.caption).foregroundStyle(.secondary)
                 if let source = row["source"] as? [String: Any], let food = source["food"] as? String { Text("Logbook: \(food) · \(recordedQuantity(source)) · \(source["date"] ?? "")").font(.caption) }
-                if row["undone"] as? Bool != true, let id = row["id"] as? String { Button("Undo") { Task { await store.perform { try await store.undo(id) } } }.font(.caption) }
+                if row["undone"] as? Bool != true, let id = row["id"] as? String { Button("Undo") { Task { await store.perform { try await store.undo(id) } } }.font(.caption).buttonStyle(.borderless) }
             }.padding(.vertical, 4)
         }.navigationTitle("History").searchable(text: $search)
     }
@@ -314,6 +314,7 @@ struct SettingsView: View {
                 if !store.configured { Text("Cloud not configured: add the registered iOS Firebase plist. Device-only mode works without it.").font(.caption) }
             }
             Section("Synchronization") {
+                Toggle("Logbook v2 consumption sync", isOn: Binding(get: { store.logbookEnabled }, set: { enabled in Task { await store.perform { try await store.setLogbookEnabled(enabled) } } })).disabled(store.busy)
                 DatePicker("Count Logbook food from", selection: $startDate, displayedComponents: .date)
                 Button("Save consumption start date") { Task { await store.perform { let formatter = DateFormatter(); formatter.calendar = Calendar(identifier: .gregorian); formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyy-MM-dd"; try await store.setMeta("state", fields: ["startDate": formatter.string(from: startDate)]) } } }
                 Text("Saved start date: \(store.meta["state"]?["startDate"] as? String ?? "Choose a date before syncing")").font(.caption)

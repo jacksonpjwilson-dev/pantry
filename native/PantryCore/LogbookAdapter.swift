@@ -15,6 +15,7 @@ struct LogbookPlan {
         if let url = Bundle.main.url(forResource: "engine", withExtension: "js"), let script = try? String(contentsOf: url) { context.evaluateScript(script) }
     }
     func plan(document: [String: Any], items: [String: Any], ledger: [[String: Any]], meta: [String: [String: Any]]) throws -> LogbookPlan {
+        guard LogbookConnectionPolicy.enabled(in: meta) else { return LogbookPlan(operations: [], cursor: 0) }
         context.exception = nil
         guard let engine = context.objectForKeyedSubscript("PE"), !engine.isUndefined else { throw InventoryErrorBridge.message("Bundled Logbook engine unavailable") }
         let v2 = engine.invokeMethod("readV2Cloud", withArguments: [document])!

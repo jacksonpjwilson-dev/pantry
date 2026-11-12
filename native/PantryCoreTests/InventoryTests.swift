@@ -44,6 +44,11 @@ final class InventoryTests: XCTestCase {
         XCTAssertNotEqual(AccountScope.cloud("alice"), AccountScope.cloud("bob"))
         XCTAssertNotEqual(AccountScope.cloud("alice"), "alice")
     }
+    func testLegacyLogbookOffPreferenceIsHonored() {
+        XCTAssertTrue(LogbookConnectionPolicy.enabled(in: [:]))
+        XCTAssertFalse(LogbookConnectionPolicy.enabled(in: ["state":["setup":["linkV2":false]]]))
+        XCTAssertTrue(LogbookConnectionPolicy.enabled(in: ["state":["setup":["linkV2":true, "cats":["Fridge"]]]]))
+    }
     func testInvalidArithmeticIsRejected() {
         XCTAssertThrowsError(try Adjustment(itemId: "rice", delta: .nan, reason: "manual").apply(to: 1))
         XCTAssertThrowsError(try Adjustment(itemId: "rice", delta: 1, reason: "manual").apply(to: -1))
