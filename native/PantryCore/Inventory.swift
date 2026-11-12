@@ -1,5 +1,10 @@
 import Foundation
 
+public enum AccountScope {
+    public static let device = "device"
+    public static func cloud(_ uid: String) -> String { "cloud:" + uid }
+}
+
 public enum InventoryError: LocalizedError {
     case invalidQuantity, incompatibleUnits, missingItem, conflict, verificationRequired
     public var errorDescription: String? {

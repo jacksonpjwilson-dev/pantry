@@ -39,6 +39,11 @@ final class InventoryTests: XCTestCase {
         XCTAssertEqual(LegacyIdentity.hash("2026-11-11|egg|m1|||2#1"), "gcjm6w1b2cs9y")
         XCTAssertEqual(LegacyIdentity.hash("🍎"), "1bhwpv335rzr")
     }
+    func testLocalAndCloudAccountScopesCannotCollide() {
+        XCTAssertNotEqual(AccountScope.cloud("device"), AccountScope.device)
+        XCTAssertNotEqual(AccountScope.cloud("alice"), AccountScope.cloud("bob"))
+        XCTAssertNotEqual(AccountScope.cloud("alice"), "alice")
+    }
     func testInvalidArithmeticIsRejected() {
         XCTAssertThrowsError(try Adjustment(itemId: "rice", delta: .nan, reason: "manual").apply(to: 1))
         XCTAssertThrowsError(try Adjustment(itemId: "rice", delta: 1, reason: "manual").apply(to: -1))

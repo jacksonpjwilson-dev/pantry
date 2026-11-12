@@ -75,7 +75,7 @@ struct DeviceState: Codable {
         busy = false
         if refreshAgain { refreshAgain = false; Task { await self.refresh() } }
     }
-    private var account = "device"
+    private var account = AccountScope.device
     private var accountTag: String { SHA256.hash(data: Data(account.utf8)).map { String(format: "%02x", $0) }.joined() }
     private var cloud: Firestore? { FirebaseApp.app() == nil ? nil : Firestore.firestore() }
     var configured: Bool { FirebaseApp.app() != nil }
@@ -90,7 +90,7 @@ struct DeviceState: Codable {
             listener = Auth.auth().addStateDidChangeListener { [weak self] _, user in
                 Task { @MainActor in
                     guard let self else { return }
-                    self.user = user; self.account = user?.uid ?? "device"
+                    self.user = user; self.account = user.map { AccountScope.cloud($0.uid) } ?? AccountScope.device
                     self.state = DeviceState(); self.history = []; self.meta = [:]; self.lastSync = nil
                     self.loadLocal(); self.authenticationReady = true; self.status = user == nil ? "Device only" : "Pending synchronization"
                     if user != nil { await self.refresh() }
