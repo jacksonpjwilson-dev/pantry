@@ -11,14 +11,40 @@ permissions:
   contents: read
 jobs:
   ios:
-    runs-on: macos-15
+    runs-on: macos-15-intel
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Core tests
         run: swift test --package-path native
-      - name: Build iOS and widget simulator targets
-        run: xcodebuild -project native/Pantry.xcodeproj -scheme Pantry -configuration Debug -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+      - name: Select simulator
+        run: |
+          xcrun simctl list devices available --json > /tmp/simulators.json
+          python3 - <<'PYTHON'
+          import json, os
+          devices = json.load(open('/tmp/simulators.json'))['devices']
+          phone = next(d for runtime, rows in devices.items() if 'iOS' in runtime for d in rows if 'iPhone' in d['name'])
+          with open(os.environ['GITHUB_ENV'], 'a') as output: output.write('PANTRY_SIMULATOR=' + phone['udid'] + '\n')
+          PYTHON
+      - name: Build Apple simulator targets
+        run: |
+          set -o pipefail
+          xcodebuild -project native/Pantry.xcodeproj -scheme Pantry -configuration Debug -derivedDataPath native/DerivedData -destination "id=$PANTRY_SIMULATOR" CODE_SIGNING_ALLOWED=NO build 2>&1 | tee native-build.log
+      - name: Launch native app and capture screenshot
+        run: |
+          xcrun simctl boot "$PANTRY_SIMULATOR" || true
+          xcrun simctl bootstatus "$PANTRY_SIMULATOR" -b
+          xcrun simctl install "$PANTRY_SIMULATOR" native/DerivedData/Build/Products/Debug-iphonesimulator/Pantry.app
+          xcrun simctl launch "$PANTRY_SIMULATOR" dev.jacksonwilson.pantry
+          sleep 5
+          xcrun simctl io "$PANTRY_SIMULATOR" screenshot pantry-simulator.png
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-validation
+          path: |
+            native-build.log
+            pantry-simulator.png
   firestore-rules:
     runs-on: ubuntu-latest
     timeout-minutes: 10
