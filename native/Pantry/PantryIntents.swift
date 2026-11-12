@@ -9,12 +9,12 @@ struct OpenPantryIntent: AppIntent {
 struct ShowShoppingIntent: AppIntent {
     static var title: LocalizedStringResource = "Show my Pantry shopping list"
     static var openAppWhenRun = true
-    @MainActor func perform() async throws -> some IntentResult & OpensIntent { .result(opensIntent: OpenURLIntent(URL(string: "pantry://shopping")!)) }
+    @MainActor func perform() async throws -> some IntentResult { IntentRouter.open(pantryURL("shopping")); return .result() }
 }
 struct ShowLowStockIntent: AppIntent {
     static var title: LocalizedStringResource = "Show low-stock food in Pantry"
     static var openAppWhenRun = true
-    @MainActor func perform() async throws -> some IntentResult & OpensIntent { .result(opensIntent: OpenURLIntent(URL(string: "pantry://inventory?filter=low")!)) }
+    @MainActor func perform() async throws -> some IntentResult { IntentRouter.open(pantryURL("inventory", ["filter":"low"])); return .result() }
 }
 struct PantryShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
@@ -39,18 +39,18 @@ struct AddShoppingIntent: AppIntent {
     static var openAppWhenRun = true
     @Parameter(title: "Food") var name: String
     @Parameter(title: "Quantity", default: 1) var quantity: Double
-    func perform() async throws -> some IntentResult & OpensIntent {
+    @MainActor func perform() async throws -> some IntentResult {
         guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, quantity.isFinite, quantity > 0 else { throw IntentValidation.invalid }
-        return .result(opensIntent: OpenURLIntent(pantryURL("action", ["kind":"shopping", "name":name, "quantity":String(quantity)])))
+        IntentRouter.open(pantryURL("action", ["kind":"shopping", "name":name, "quantity":String(quantity)])); return .result()
     }
 }
 struct MarkPurchasedIntent: AppIntent {
     static var title: LocalizedStringResource = "Mark a Pantry shopping item purchased"
     static var openAppWhenRun = true
     @Parameter(title: "Shopping item name") var name: String
-    func perform() async throws -> some IntentResult & OpensIntent {
+    @MainActor func perform() async throws -> some IntentResult {
         guard !name.isEmpty else { throw IntentValidation.invalid }
-        return .result(opensIntent: OpenURLIntent(pantryURL("action", ["kind":"purchase", "name":name])))
+        IntentRouter.open(pantryURL("action", ["kind":"purchase", "name":name])); return .result()
     }
 }
 struct AddInventoryIntent: AppIntent {
@@ -58,22 +58,31 @@ struct AddInventoryIntent: AppIntent {
     static var openAppWhenRun = true
     @Parameter(title: "Food name") var name: String
     @Parameter(title: "Quantity in inventory units", default: 1) var quantity: Double
-    func perform() async throws -> some IntentResult & OpensIntent {
+    @MainActor func perform() async throws -> some IntentResult {
         guard !name.isEmpty, quantity.isFinite, quantity > 0 else { throw IntentValidation.invalid }
-        return .result(opensIntent: OpenURLIntent(pantryURL("action", ["kind":"inventory", "name":name, "quantity":String(quantity)])))
+        IntentRouter.open(pantryURL("action", ["kind":"inventory", "name":name, "quantity":String(quantity)])); return .result()
     }
 }
 struct ShowExpiryIntent: AppIntent {
     static var title: LocalizedStringResource = "Show Pantry foods with upcoming dates"
     static var openAppWhenRun = true
-    func perform() async throws -> some IntentResult & OpensIntent { .result(opensIntent: OpenURLIntent(pantryURL("inventory", ["filter":"expiry"]))) }
+    @MainActor func perform() async throws -> some IntentResult { IntentRouter.open(pantryURL("inventory", ["filter":"expiry"])); return .result() }
 }
 struct OpenScannerIntent: AppIntent {
     static var title: LocalizedStringResource = "Open Pantry barcode scanner"
     static var openAppWhenRun = true
-    func perform() async throws -> some IntentResult & OpensIntent { .result(opensIntent: OpenURLIntent(pantryURL("inventory", ["scan":"true"]))) }
+    @MainActor func perform() async throws -> some IntentResult { IntentRouter.open(pantryURL("inventory", ["scan":"true"])); return .result() }
 }
 private enum IntentValidation: LocalizedError {
     case invalid
     var errorDescription: String? { "Enter a food name and a positive finite quantity." }
+}
+
+// Foreground intents work on iOS 17 without the iOS 18 OpenURLIntent API.
+@MainActor enum IntentRouter {
+    static weak var store: PantryStore?
+    static var queuedURL: URL?
+    static func open(_ url: URL) {
+        if let store { store.open(url) } else { queuedURL = url }
+    }
 }

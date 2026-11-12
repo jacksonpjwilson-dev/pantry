@@ -84,6 +84,8 @@ struct DeviceState: Codable {
     var expiring: [InventoryItem] { state.items.filter { Expiry.upcoming($0, now: Date(), days: 7) } }
     func start(context: ModelContext) {
         guard self.context == nil else { return }; self.context = context
+        IntentRouter.store = self
+        if let pending = IntentRouter.queuedURL { IntentRouter.queuedURL = nil; open(pending) }
         WatchBridge.shared.store = self
         loadLocal()
         if configured {
@@ -540,7 +542,7 @@ struct DeviceState: Codable {
     }
     func exportBackup() throws -> URL {
         guard cacheWritable else { throw InventoryErrorBridge.message("The unreadable cache must be recovered before making a structured backup") }
-        var object: [String: Any] = ["format":"Pantry native backup v1", "items": Dictionary(uniqueKeysWithValues: state.items.map { ($0.id, wire($0)) }), "ledger": Dictionary(uniqueKeysWithValues: history.compactMap { row in guard let id = row["id"] as? String else { return nil }; return (id, row) }), "meta": meta]
+        var object: [String: Any] = ["format":"Pantry native backup v1", "items": Dictionary(uniqueKeysWithValues: state.items.map { ($0.id, wire($0)) }), "ledger": Dictionary(uniqueKeysWithValues: history.compactMap { row -> (String, [String: Any])? in guard let id = row["id"] as? String else { return nil }; return (id, row) }), "meta": meta]
         object["nativeState"] = String(data: try JSONEncoder().encode(state), encoding: .utf8)!
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("Pantry-backup.json")
         try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]).write(to: url, options: [.atomic, .completeFileProtection])
