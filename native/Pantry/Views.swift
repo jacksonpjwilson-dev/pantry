@@ -21,6 +21,7 @@ struct RootView: View {
             NavigationStack { InboxView() }.tabItem { Label("Links", systemImage: "link") }.tag("inbox")
             NavigationStack { SettingsView() }.tabItem { Label("Settings", systemImage: "gearshape") }.tag("settings")
         }
+        .safeAreaInset(edge: .top) { if !store.cacheWritable { Text("Local cache needs recovery. Existing storage is preserved.").font(.caption).padding().frame(maxWidth: .infinity).background(.orange.opacity(0.2)) } }
         .tint(colors[max(0, min(theme, colors.count - 1))])
         .preferredColorScheme(appearance == "auto" ? nil : appearance == "dark" ? .dark : .light)
         .sheet(item: $store.intentRequest) { request in
@@ -226,6 +227,8 @@ struct InboxView: View {
     @State var chosen: String?
     @State var itemID = ""
     @State var per = "1"
+    @State var linkMode = "per"
+    @State var linkSearch = ""
     var body: some View {
         List {
             Text("Confirm how much one logged serving uses. No uncertain matches are applied automatically.").font(.caption).foregroundStyle(.secondary)
@@ -237,10 +240,13 @@ struct InboxView: View {
         }.navigationTitle("Link inbox").refreshable { await store.syncLogbook() }
         .sheet(isPresented: Binding(get: { chosen != nil }, set: { if !$0 { chosen = nil } })) {
             NavigationStack { Form {
-                Picker("Pantry food", selection: $itemID) { Text("Select an item").tag(""); ForEach(store.state.items) { Text("\($0.name) (\($0.unit))").tag($0.id) } }
+                TextField("Search pantry foods", text: $linkSearch)
+                Picker("Pantry food", selection: $itemID) { Text("Select an item").tag(""); ForEach(store.state.items.filter { linkSearch.isEmpty || $0.name.localizedCaseInsensitiveContains(linkSearch) }.sorted { $0.name < $1.name }) { Text("\($0.name) (\($0.unit))").tag($0.id) } }
                 Button("Create a new pantry food") { newFood = true }
-                TextField("Inventory units per logged serving", text: $per).keyboardType(.decimalPad)
-                Button("Confirm relationship and sync") { guard let fid = chosen else { return }; Task { await store.perform { guard let amount = Decimal(string: per), amount > 0 else { throw InventoryError.verificationRequired }; try await store.link(fid: fid, itemID: itemID, per: amount); chosen = nil } } }.disabled(itemID.isEmpty)
+                Picker("Relationship", selection: $linkMode) { Text("Verified units per serving").tag("per"); Text("Compatible recorded measurement").tag("auto") }
+                if linkMode == "per" { TextField("Inventory units per logged serving", text: $per).keyboardType(.decimalPad) }
+                else { Text("Only compatible measured units are converted. Missing measurements or mass/volume mismatches stop synchronization for review.").font(.caption) }
+                Button("Confirm relationship and sync") { guard let fid = chosen else { return }; Task { await store.perform { guard let amount = Decimal(string: per), amount > 0 else { throw InventoryError.verificationRequired }; try await store.link(fid: fid, itemID: itemID, per: amount, mode: linkMode); chosen = nil } } }.disabled(itemID.isEmpty)
                 Button("Ignore this food") { guard let fid = chosen else { return }; Task { await store.perform { try await store.ignore(fid: fid); chosen = nil } } }
             }.sheet(isPresented: $newFood) { ItemEditor(item: InventoryItem(name: "")) }.navigationTitle("Verify serving").toolbar { Button("Cancel") { chosen = nil } } }
         }
@@ -278,6 +284,8 @@ struct SettingsView: View {
     @State var cloudPreview: PantryStore.CloudMigrationPreview?
     @State var startDate = Date()
     @AppStorage("autoLowShopping") var autoLowShopping = false
+    @AppStorage("notifyShopping") var notifyShopping = false
+    @AppStorage("notifyReview") var notifyReview = false
     @AppStorage("notifyLow") var notifyLow = true
     @AppStorage("notifyExpiry") var notifyExpiry = true
     @AppStorage("quietStart") var quietStart = 22
@@ -302,18 +310,29 @@ struct SettingsView: View {
                 Button("Save consumption start date") { Task { await store.perform { let formatter = DateFormatter(); formatter.calendar = Calendar(identifier: .gregorian); formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyy-MM-dd"; try await store.setMeta("state", fields: ["startDate": formatter.string(from: startDate)]) } } }
                 Text("Saved start date: \(store.meta["state"]?["startDate"] as? String ?? "Choose a date before syncing")").font(.caption)
                 Text(store.status); Text("\(store.state.queue.count) queued quantity changes"); Button("Refresh inventory") { Task { await store.refresh() } }; Button("Check Logbook v2") { Task { await store.syncLogbook() } }; Text("Sync runs while Pantry is active. Native Logbook and Head Quarter adapters are not configured.").font(.caption) }
+            if let links = store.meta["links"], !links.isEmpty {
+                Section("Linked Logbook foods") { ForEach(links.keys.sorted(), id: \.self) { fid in
+                    let link = links[fid] as? [String: Any] ?? [:]
+                    Button("Ignore \(link["food"] as? String ?? fid)") { Task { await store.perform { try await store.ignore(fid: fid) } } }
+                } }
+            }
+            if let ignored = store.meta["ignored"], !ignored.isEmpty {
+                Section("Ignored Logbook foods") { ForEach(ignored.keys.sorted(), id: \.self) { fid in Button("Restore \(ignored[fid] as? String ?? fid)") { Task { await store.perform { try await store.restoreIgnored(fid) } } } } }
+            }
             Section("Appearance") {
                 Picker("Mode", selection: $appearance) { Text("Automatic").tag("auto"); Text("Light").tag("light"); Text("Dark").tag("dark") }
                 Picker("Colour", selection: $theme) { ForEach(Array(["Logbook Teal", "Midnight Navy & Gold", "Forest & Cream", "Sunset Coral", "Mono + Red", "Arctic", "Sand & Terracotta", "Electric Violet", "Graphite & Mint", "Aviator", "Rose & Charcoal", "Grey"].enumerated()), id: \.offset) { index, title in Text(title).tag(index) } }
             }
             Section("Low stock") { Toggle("Automatically add low-stock suggestions", isOn: $autoLowShopping) }
             Section("Notifications") {
+                Toggle("Outstanding shopping reminders", isOn: $notifyShopping)
+                Toggle("Synchronization and conflict review alerts", isOn: $notifyReview)
                 Toggle("Low-stock reminders", isOn: $notifyLow)
                 Toggle("Recorded date reminders", isOn: $notifyExpiry)
                 Picker("Days before recorded date", selection: $expiryDays) { Text("Three").tag(3); Text("Seven").tag(7) }
                 Stepper("Quiet hours start: \(quietStart):00", value: $quietStart, in: 0...23)
                 Stepper("Quiet hours end: \(quietEnd):00", value: $quietEnd, in: 0...23)
-                Button("Enable low-stock and date reminders") { Task { await store.perform { try await ReminderService.configure(items: store.state.items, scope: store.notificationScope) } } }; Text("Optional local reminders use recorded dates. Open Pantry to update reminders after cloud changes.").font(.caption) }
+                Button("Enable low-stock and date reminders") { Task { await store.perform { try await ReminderService.configure(items: store.state.items, scope: store.notificationScope, shoppingCount: store.state.shopping.filter { !$0.purchased }.count) } } }; Text("Optional local reminders use recorded dates. Open Pantry to update reminders after cloud changes.").font(.caption) }
             Section("Backups and migration") {
                 Button("Prepare a private backup") { Task { await store.perform { backupURL = try store.exportBackup() } } }
                 if let url = backupURL { ShareLink("Share backup", item: url) }

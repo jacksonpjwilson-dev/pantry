@@ -5,7 +5,7 @@ on:
   pull_request:
     paths: ['native/**', '.github/workflows/native.yml']
 concurrency:
-  group: native-${{ github.head_ref || github.ref_name }}
+  group: native-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 permissions:
   contents: read
@@ -22,6 +22,8 @@ jobs:
           path: native/DerivedData
           key: pantry-xcode-intel-${{ github.sha }}
           restore-keys: pantry-xcode-intel-
+      - name: Shared engine compatibility
+        run: cmp engine.js native/Pantry/engine.js
       - name: Core tests
         run: swift test --package-path native
       - name: Select simulator

@@ -33,6 +33,11 @@ struct LogbookPlan {
             let entries = (value as? [String: Any])?["entries"] as? [[String: Any]] ?? []
             let keys = engine.invokeMethod("entryKeys", withArguments: [date, entries])?.toArray() as? [[String: Any]] ?? []
             for entry in keys {
+                if let record = entry["e"] as? [String: Any] {
+                    let fid = String(describing: record["fid"] ?? "")
+                    let ignored = meta["ignored"]?[fid]
+                    if (ignored as? NSNumber)?.boolValue == true || (ignored as? String).map({ !$0.isEmpty }) == true { continue }
+                }
                 if let key = entry["key"] as? String, let correction = engine.invokeMethod("ledgerId", withArguments: ["c", key])?.toString(), ids.contains(correction) {
                     throw InventoryErrorBridge.message("A previously corrected Logbook occurrence has reappeared. Review history before syncing; legacy source IDs cannot identify this safely.")
                 }
@@ -48,7 +53,15 @@ struct LogbookPlan {
             let food = foods[fid] as? [String: Any] ?? [:]
             let item = items[op["itemId"] as? String ?? ""] as? [String: Any] ?? [:]
             let explicit = link["mode"] as? String == "per" && ((link["per"] as? NSNumber)?.doubleValue ?? 0) > 0
-            let measured = food["kind"] as? String == "measured" && engine.invokeMethod("convU", withArguments: [1, food["unit"] ?? "", item["unit"] ?? ""])?.isNull == false
+            var recordedUnit = food["unit"] as? String ?? ""
+            if let amount = source["amt"], !(amount is NSNull) {
+                guard let number = amount as? NSNumber, number.doubleValue.isFinite, number.doubleValue >= 0 else { throw InventoryErrorBridge.message("Logbook contains an invalid measured amount") }
+                if !explicit, let unit = source["unit"] as? String, !unit.isEmpty {
+                    guard let normalized = engine.invokeMethod("unitNorm", withArguments: [unit]), !normalized.isNull, !normalized.isUndefined else { throw InventoryError.verificationRequired }
+                    recordedUnit = normalized.toString()
+                }
+            }
+            let measured = food["kind"] as? String == "measured" && engine.invokeMethod("convU", withArguments: [1, recordedUnit, item["unit"] ?? ""])?.isNull == false
             guard explicit || measured else { throw InventoryErrorBridge.message("Verify the serving relationship for \(source["food"] ?? "this food") before syncing.") }
         }
         return LogbookPlan(operations: ops, cursor: result["cursor"] as? Double ?? 0)

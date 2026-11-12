@@ -12,7 +12,12 @@ import Foundation
         do { try WCSession.default.updateApplicationContext(["account": store?.user?.uid ?? "device", "shopping": shopping, "low": low, "count": state.items.count, "updated": Date().timeIntervalSince1970]) }
         catch { store?.error = "Watch snapshot could not be delivered: \(error.localizedDescription)" }
     }
-    nonisolated func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {}
+    nonisolated func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
+        Task { @MainActor in if let store = self.store { self.publish(state: store.state) } }
+    }
+    nonisolated func sessionWatchStateDidChange(_ session: WCSession) {
+        Task { @MainActor in if let store = self.store { self.publish(state: store.state) } }
+    }
     nonisolated func sessionDidBecomeInactive(_ session: WCSession) {}
     nonisolated func sessionDidDeactivate(_ session: WCSession) { session.activate() }
     nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any]) {

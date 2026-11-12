@@ -20,6 +20,9 @@ final class LogbookTests: XCTestCase {
         XCTAssertTrue(try adapter.plan(document: doc([entry]), items: items, ledger: [row], meta: meta).operations.isEmpty)
         let removed = try adapter.plan(document: doc([]), items: items, ledger: [row], meta: meta)
         XCTAssertEqual(removed.operations.first?["delta"] as? Int, 2)
+        let correction = removed.operations.first!
+        let corrected: [String: Any] = ["id": correction["id"]!, "itemId":"eggs", "reason":"correction", "delta":2, "source":correction["source"]!]
+        XCTAssertTrue(try adapter.plan(document: doc([]), items: items, ledger: [row, corrected], meta: meta).operations.isEmpty)
         let deletedDay = try adapter.plan(document: ["r": [:]], items: items, ledger: [row], meta: meta)
         XCTAssertEqual(deletedDay.operations.first?["delta"] as? Int, 2)
     }
@@ -34,6 +37,8 @@ final class LogbookTests: XCTestCase {
         let key = "2026-11-11|egg||||1#1"
         let row: [String: Any] = ["id":LegacyIdentity.ledgerID("c", key:key), "reason":"correction", "source":["key":key, "date":date]]
         XCTAssertThrowsError(try adapter().plan(document: doc([["fid":"egg", "q":1]]), items: items, ledger: [row], meta: meta))
+        var ignored = meta; ignored["ignored"] = ["egg":true]
+        XCTAssertTrue(try adapter().plan(document: doc([["fid":"egg", "q":1]]), items: items, ledger: [row], meta: ignored).operations.isEmpty)
     }
     @MainActor func testUnlinkedAndUnknownFoodMetadata() async throws {
         let result = try adapter().plan(document: doc([["fid":"unknown", "q":1]]), items: items, ledger: [], meta: [:])
@@ -41,6 +46,25 @@ final class LogbookTests: XCTestCase {
     }
     @MainActor func testInvalidQuantityDoesNotProduceAdjustment() async throws {
         XCTAssertThrowsError(try adapter().plan(document: doc([["fid":"egg", "q":-2]]), items: items, ledger: [], meta: meta))
+    }
+    @MainActor func testRecordedUnitMismatchCannotFallBackToOneServing() async throws {
+        let adapter = try adapter()
+        let items: [String: Any] = ["rice":["id":"rice", "name":"Rice", "unit":"g", "qty":1000]]
+        let meta: [String: [String: Any]] = ["links":["rice":["itemId":"rice", "mode":"auto"]]]
+        var document: [String: Any] = ["r":["foods#rice":["v":["id":"rice", "name":"Rice", "kind":"measured", "size":100, "unit":"g"]], "food@2026-11-11":["t":1, "v":[["fid":"rice", "q":1, "amt":150, "unit":"g"]]]]]
+        let valid = try adapter.plan(document: document, items: items, ledger: [], meta: meta)
+        XCTAssertEqual(valid.operations.first?["delta"] as? Int, -150)
+        var records = document["r"] as! [String: Any]
+        records["food@2026-11-11"] = ["t":1, "v":[["fid":"rice", "q":1, "amt":150, "unit":"ml"]]]
+        document["r"] = records
+        XCTAssertThrowsError(try adapter.plan(document: document, items: items, ledger: [], meta: meta))
+    }
+    @MainActor func testCompleteLedgerRecognizesOldConsumption() async throws {
+        let adapter = try adapter(), entry: [String: Any] = ["fid":"egg", "q":2]
+        let op = try adapter.plan(document: doc([entry]), items: items, ledger: [], meta: meta).operations.first!
+        var ledger: [[String: Any]] = (0..<600).map { ["id":"manual-\($0)", "reason":"manual"] }
+        ledger.append(["id":op["id"]!, "itemId":"eggs", "reason":"eaten", "delta":-2, "source":op["source"]!])
+        XCTAssertTrue(try adapter.plan(document: doc([entry]), items: items, ledger: ledger, meta: meta).operations.isEmpty)
     }
     @MainActor func testUnverifiedServingIsBlocked() async throws {
         XCTAssertThrowsError(try adapter().plan(document: doc([["fid":"egg", "q":1]]), items: items, ledger: [], meta: ["links":["egg":["itemId":"eggs", "mode":"auto"]]]))

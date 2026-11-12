@@ -39,6 +39,11 @@ final class InventoryTests: XCTestCase {
         XCTAssertEqual(LegacyIdentity.hash("2026-11-11|egg|m1|||2#1"), "gcjm6w1b2cs9y")
         XCTAssertEqual(LegacyIdentity.hash("🍎"), "1bhwpv335rzr")
     }
+    func testInvalidArithmeticIsRejected() {
+        XCTAssertThrowsError(try Adjustment(itemId: "rice", delta: .nan, reason: "manual").apply(to: 1))
+        XCTAssertThrowsError(try Adjustment(itemId: "rice", delta: 1, reason: "manual").apply(to: -1))
+        XCTAssertThrowsError(try Measures.convert(.nan, from: "kg", to: "g"))
+    }
     func testPrecision() throws {
         XCTAssertEqual(try Adjustment(itemId: "rice", delta: Decimal(string: "-0.125")!, reason: "eaten").apply(to: 1).after, Decimal(string: "0.875"))
     }

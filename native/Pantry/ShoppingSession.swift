@@ -3,7 +3,8 @@ import AppIntents
 
 @MainActor enum ShoppingSession {
     static func start(completed: Int, total: Int) throws {
-        guard ActivityAuthorizationInfo().areActivitiesEnabled, !Activity<ShoppingActivity>.activities.contains(where: { $0.activityState == .active }) else { return }
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else { throw InventoryErrorBridge.message("Enable Live Activities for Pantry in iPhone Settings to start a shopping session") }
+        guard !Activity<ShoppingActivity>.activities.contains(where: { $0.activityState == .active }) else { return }
         let now = Date()
         _ = try Activity.request(attributes: ShoppingActivity(listName: "Groceries", startedAt: now), content: ActivityContent(state: ShoppingActivity.ContentState(completed: completed, total: total), staleDate: now.addingTimeInterval(4 * 3600)), pushType: nil)
     }

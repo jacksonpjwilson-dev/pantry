@@ -19,7 +19,7 @@ import WatchConnectivity
     }
     func purchase(_ id: String) { WCSession.default.transferUserInfo(["purchase": id, "account": account]) }
     func adjust(_ id: String, delta: Int) { WCSession.default.transferUserInfo(["item": id, "delta": String(delta), "operation": "watch_" + UUID().uuidString, "account": account]) }
-    nonisolated func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) { Task { @MainActor in self.apply(session.receivedApplicationContext) } }
+    nonisolated func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) { Task { @MainActor in if !session.receivedApplicationContext.isEmpty { self.apply(session.receivedApplicationContext) } } }
     nonisolated func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) { Task { @MainActor in self.apply(applicationContext) } }
 }
 @main struct PantryWatchApp: App {

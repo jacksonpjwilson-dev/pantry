@@ -3,13 +3,6 @@ import WidgetKit
 import ActivityKit
 import AppIntents
 
-struct FinishShoppingSessionIntent: LiveActivityIntent {
-    static var title: LocalizedStringResource = "Finish Pantry shopping session"
-    func perform() async throws -> some IntentResult {
-        for activity in Activity<ShoppingActivity>.activities { await activity.end(nil, dismissalPolicy: .immediate) }
-        return .result()
-    }
-}
 struct ShoppingLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: ShoppingActivity.self) { context in

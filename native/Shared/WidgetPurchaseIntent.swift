@@ -5,6 +5,7 @@ import WidgetKit
 struct WidgetPurchaseIntent: AppIntent {
     static var title: LocalizedStringResource = "Complete a Pantry shopping item"
     static var openAppWhenRun = true
+    static var isDiscoverable = false
     @Parameter(title: "Shopping ID") var shoppingID: String
     @Parameter(title: "Account scope") var accountTag: String
     init() {}

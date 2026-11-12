@@ -1,6 +1,17 @@
 import Foundation
 
-public enum InventoryError: Error { case invalidQuantity, incompatibleUnits, missingItem, conflict, verificationRequired }
+public enum InventoryError: LocalizedError {
+    case invalidQuantity, incompatibleUnits, missingItem, conflict, verificationRequired
+    public var errorDescription: String? {
+        switch self {
+        case .invalidQuantity: return "The quantity is invalid or exceeds supported precision. Enter a finite amount; existing stock must be nonnegative."
+        case .incompatibleUnits: return "These units cannot be converted without a verified serving or density relationship."
+        case .missingItem: return "This item no longer exists. Refresh inventory and review the pending operation."
+        case .conflict: return "A record changed or an operation identifier conflicts. Refresh and review the pending changes."
+        case .verificationRequired: return "Confirm a compatible measurement or a positive verified serving relationship."
+        }
+    }
+}
 public enum Measures {
     // Exact decimal strings, matching the production engine (including its 240 ml cup).
     public static let units = ["count", "g", "kg", "oz", "lb", "ml", "L", "fl oz", "cup", "tbsp", "tsp"]
@@ -9,7 +20,9 @@ public enum Measures {
         guard amount >= 0 else { throw InventoryError.invalidQuantity }
         if from == to && units.contains(from) { return amount }
         guard let a = factors[from], let b = factors[to], a.0 == b.0 else { throw InventoryError.incompatibleUnits }
-        return amount * Decimal(string: a.1)! / Decimal(string: b.1)!
+        let converted = amount * Decimal(string: a.1)! / Decimal(string: b.1)!
+        guard !converted.isNaN else { throw InventoryError.invalidQuantity }
+        return converted
     }
     public static func rounded(_ amount: Decimal) -> Decimal { var input = amount; var output = Decimal(); NSDecimalRound(&output, &input, 3, .plain); return output }
 }
@@ -44,7 +57,9 @@ public struct Adjustment: Codable, Identifiable {
     public init(id: String = "m_" + UUID().uuidString, itemId: String, delta: Decimal, reason: String) { self.id = id; self.itemId = itemId; self.delta = delta; self.reason = reason }
     public func apply(to before: Decimal) throws -> (after: Decimal, applied: Decimal, unfulfilled: Decimal) {
         guard before >= 0, !delta.isNaN else { throw InventoryError.invalidQuantity }
-        let requested = Measures.rounded(delta), after = max(0, Measures.rounded(before + requested))
+        let requested = Measures.rounded(delta), sum = before + requested
+        guard !requested.isNaN, !sum.isNaN else { throw InventoryError.invalidQuantity }
+        let after = max(0, Measures.rounded(sum))
         return (after, after - before, requested - (after - before))
     }
 }

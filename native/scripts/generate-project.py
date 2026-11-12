@@ -61,7 +61,7 @@ base={'SWIFT_VERSION':'5.0','IPHONEOS_DEPLOYMENT_TARGET':'17.0','SDKROOT':'iphon
 def configlist(name,extra):
     configs=[]
     for mode in ['Debug','Release']:
-        values=base | extra | {'SWIFT_OPTIMIZATION_LEVEL':'-Onone' if mode=='Debug' else '-O'}
+        values=base | extra | {'SWIFT_OPTIMIZATION_LEVEL':'-Onone' if mode=='Debug' else '-O', 'ONLY_ACTIVE_ARCH':'YES' if mode=='Debug' else 'NO'}
         configs.append(obj(name+mode,'{isa = XCBuildConfiguration; buildSettings = '+settings(values)+'; name = '+mode+';}'))
     return obj(name+'configlist','{isa = XCConfigurationList; buildConfigurations = '+arr(configs)+'; defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;}')
 projectconfig=configlist('project',{})

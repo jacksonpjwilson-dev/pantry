@@ -10,7 +10,7 @@ import UserNotifications
         guard quiet else { return date }
         return calendar.nextDate(after: date, matching: DateComponents(hour: end, minute: 0), matchingPolicy: .nextTime) ?? date
     }
-    static func configure(items: [InventoryItem], scope: String) async throws {
+    static func configure(items: [InventoryItem], scope: String, shoppingCount: Int = 0) async throws {
         let center = UNUserNotificationCenter.current()
         guard try await center.requestAuthorization(options: [.alert, .sound, .badge]) else { return }
         let defaults = UserDefaults.standard
@@ -37,6 +37,21 @@ import UserNotifications
                 requests.append(UNNotificationRequest(identifier: "pantry-expiry-" + item.id, content: content, trigger: UNCalendarNotificationTrigger(dateMatching: Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: allowedDate(reminder)), repeats: false)))
             }
         }
+        let shoppingKey = "pantry-shopping-" + scope
+        if shoppingCount == 0 || !defaults.bool(forKey: "notifyShopping") { defaults.removeObject(forKey: shoppingKey); center.removePendingNotificationRequests(withIdentifiers: [shoppingKey]) }
+        else if !defaults.bool(forKey: shoppingKey) {
+            let content = UNMutableNotificationContent(); content.title = "Your Pantry shopping list is waiting"; content.body = "Open Pantry to review outstanding shopping items."
+            try await center.add(UNNotificationRequest(identifier: shoppingKey, content: content, trigger: UNTimeIntervalNotificationTrigger(timeInterval: max(60, allowedDate(Date().addingTimeInterval(86400)).timeIntervalSinceNow), repeats: false)))
+            defaults.set(true, forKey: shoppingKey)
+        }
         for request in requests.prefix(50) { try await center.add(request); if request.identifier.hasPrefix("pantry-low-") { defaults.set(true, forKey: request.identifier) } }
+    }
+    static func reviewNeeded(scope: String, needed: Bool) async throws {
+        let defaults = UserDefaults.standard, center = UNUserNotificationCenter.current(), key = "pantry-review-" + scope
+        if !needed { defaults.removeObject(forKey: key); center.removePendingNotificationRequests(withIdentifiers: [key]); return }
+        guard defaults.bool(forKey: "remindersEnabled"), defaults.bool(forKey: "notifyReview"), !defaults.bool(forKey: key) else { return }
+        let content = UNMutableNotificationContent(); content.title = "Pantry synchronization needs review"; content.body = "Open Pantry to review an authentication, connectivity or inventory synchronization issue."
+        try await center.add(UNNotificationRequest(identifier: key, content: content, trigger: UNTimeIntervalNotificationTrigger(timeInterval: max(2, allowedDate(Date().addingTimeInterval(2)).timeIntervalSinceNow), repeats: false)))
+        defaults.set(true, forKey: key)
     }
 }
