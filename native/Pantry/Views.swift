@@ -2,6 +2,7 @@ import SwiftUI
 import SwiftData
 import FirebaseAuth
 import Charts
+import UniformTypeIdentifiers
 
 private func number(_ value: Decimal) -> String { NSDecimalNumber(decimal: value).stringValue }
 let categories = ["Fridge", "Freezer", "Pantry", "Produce", "Dairy", "Meat and fish", "Breakfast", "Baking", "Spices", "Snacks", "Drinks", "Household", "Other"]
@@ -221,6 +222,7 @@ struct ShoppingView: View {
 }
 struct InboxView: View {
     @EnvironmentObject var store: PantryStore
+    @State var newFood = false
     @State var chosen: String?
     @State var itemID = ""
     @State var per = "1"
@@ -236,10 +238,11 @@ struct InboxView: View {
         .sheet(isPresented: Binding(get: { chosen != nil }, set: { if !$0 { chosen = nil } })) {
             NavigationStack { Form {
                 Picker("Pantry food", selection: $itemID) { Text("Select an item").tag(""); ForEach(store.state.items) { Text("\($0.name) (\($0.unit))").tag($0.id) } }
+                Button("Create a new pantry food") { newFood = true }
                 TextField("Inventory units per logged serving", text: $per).keyboardType(.decimalPad)
                 Button("Confirm relationship and sync") { guard let fid = chosen else { return }; Task { await store.perform { guard let amount = Decimal(string: per), amount > 0 else { throw InventoryError.verificationRequired }; try await store.link(fid: fid, itemID: itemID, per: amount); chosen = nil } } }.disabled(itemID.isEmpty)
                 Button("Ignore this food") { guard let fid = chosen else { return }; Task { await store.perform { try await store.ignore(fid: fid); chosen = nil } } }
-            }.navigationTitle("Verify serving").toolbar { Button("Cancel") { chosen = nil } } }
+            }.sheet(isPresented: $newFood) { ItemEditor(item: InventoryItem(name: "")) }.navigationTitle("Verify serving").toolbar { Button("Cancel") { chosen = nil } } }
         }
     }
 }
@@ -269,6 +272,10 @@ struct SettingsView: View {
     @State var password = ""
     @State var create = false
     @State var remove = false
+    @State var importing = false
+    @State var preview: PantryStore.ImportPreview?
+    @State var backupURL: URL?
+    @State var startDate = Date()
     @AppStorage("autoLowShopping") var autoLowShopping = false
     @AppStorage("notifyLow") var notifyLow = true
     @AppStorage("notifyExpiry") var notifyExpiry = true
@@ -288,7 +295,11 @@ struct SettingsView: View {
                 }
                 if !store.configured { Text("Cloud not configured: add the registered iOS Firebase plist. Device-only mode works without it.").font(.caption) }
             }
-            Section("Synchronization") { Text(store.status); Text("\(store.state.queue.count) queued quantity changes"); Button("Refresh inventory") { Task { await store.refresh() } }; Button("Check Logbook v2") { Task { await store.syncLogbook() } }; Text("Sync runs while Pantry is active. Native Logbook and Head Quarter adapters are not configured.").font(.caption) }
+            Section("Synchronization") {
+                DatePicker("Count Logbook food from", selection: $startDate, displayedComponents: .date)
+                Button("Save consumption start date") { Task { await store.perform { let formatter = DateFormatter(); formatter.calendar = Calendar(identifier: .gregorian); formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyy-MM-dd"; try await store.setMeta("state", fields: ["startDate": formatter.string(from: startDate)]) } } }
+                Text("Saved start date: \(store.meta["state"]?["startDate"] as? String ?? "Choose a date before syncing")").font(.caption)
+                Text(store.status); Text("\(store.state.queue.count) queued quantity changes"); Button("Refresh inventory") { Task { await store.refresh() } }; Button("Check Logbook v2") { Task { await store.syncLogbook() } }; Text("Sync runs while Pantry is active. Native Logbook and Head Quarter adapters are not configured.").font(.caption) }
             Section("Appearance") {
                 Picker("Mode", selection: $appearance) { Text("Automatic").tag("auto"); Text("Light").tag("light"); Text("Dark").tag("dark") }
                 Picker("Colour", selection: $theme) { ForEach(Array(["Logbook Teal", "Midnight Navy & Gold", "Forest & Cream", "Sunset Coral", "Mono + Red", "Arctic", "Sand & Terracotta", "Electric Violet", "Graphite & Mint", "Aviator", "Rose & Charcoal", "Grey"].enumerated()), id: \.offset) { index, title in Text(title).tag(index) } }
@@ -300,8 +311,24 @@ struct SettingsView: View {
                 Stepper("Quiet hours start: \(quietStart):00", value: $quietStart, in: 0...23)
                 Stepper("Quiet hours end: \(quietEnd):00", value: $quietEnd, in: 0...23)
                 Button("Enable low-stock and date reminders") { Task { await store.perform { try await ReminderService.configure(items: store.state.items) } } }; Text("Optional local reminders use recorded dates. Open Pantry to update reminders after cloud changes.").font(.caption) }
+            Section("Backups and migration") {
+                Button("Prepare a private backup") { Task { await store.perform { backupURL = try store.exportBackup() } } }
+                if let url = backupURL { ShareLink("Share backup", item: url) }
+                Button("Import complete browser/device backup") { importing = true }.disabled(store.user != nil || !store.state.items.isEmpty || !store.history.isEmpty)
+                Text("Import requires an empty device-only pantry and a complete backup. Review counts before confirming. Account sign-in never uploads it automatically.").font(.caption)
+            }
             Section("Privacy") { Text("No private food records are sent to telemetry. Lock Screen widgets share counts only."); Button("Remove device-only data", role: .destructive) { remove = true }.disabled(store.user != nil) }
-        }.navigationTitle("Settings").confirmationDialog("Remove this device's local inventory and history?", isPresented: $remove) { Button("Remove", role: .destructive) { Task { await store.perform { try store.clearDevice() } } } }
+        }.navigationTitle("Settings")
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { result in
+            do { let url = try result.get(); let scoped = url.startAccessingSecurityScopedResource(); defer { if scoped { url.stopAccessingSecurityScopedResource() } }; preview = try store.previewBrowserImport(Data(contentsOf: url)) } catch { store.error = error.localizedDescription }
+        }
+        .sheet(item: $preview) { candidate in NavigationStack { Form {
+            Text("Import \(candidate.items.count) foods and \(candidate.ledger.count) historical transactions into this empty device-only pantry.")
+            Text("Existing item and ledger identifiers will be retained. A copy of the original file is retained in the native backup.")
+            Button("Confirm import") { Task { await store.perform { try store.importBrowser(candidate); preview = nil } } }
+            Button("Cancel", role: .cancel) { preview = nil }
+        }.navigationTitle("Review backup") } }
+        .confirmationDialog("Remove this device's local inventory and history?", isPresented: $remove) { Button("Remove", role: .destructive) { Task { await store.perform { try store.clearDevice() } } } }
     }
 }
 

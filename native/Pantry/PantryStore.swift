@@ -21,6 +21,7 @@ struct DeviceState: Codable {
     var mutations: [OfflineMutation]? = []
     var pendingShopping: [ShoppingItem]? = []
     var lowEpisodes: Set<String>? = []
+    var originalImportData: Data?
 }
 @MainActor final class PantryStore: ObservableObject {
     @Published var state = DeviceState()
@@ -140,7 +141,7 @@ struct DeviceState: Codable {
         return value
     }
     private func wire(_ it: InventoryItem) -> [String: Any] {
-        ["id": it.id, "name": it.name, "qty": NSDecimalNumber(decimal: it.qty), "unit": it.unit, "category": it.category, "lowAt": it.lowAt.map { NSDecimalNumber(decimal: $0) as Any } ?? NSNull(), "barcode": it.barcode as Any? ?? NSNull(), "brand": it.brand as Any? ?? NSNull(), "notes": it.notes as Any? ?? NSNull(), "location": it.location as Any? ?? NSNull(), "imageURL": it.imageURL as Any? ?? NSNull(), "dateKind": it.dateKind as Any? ?? NSNull(), "expirationDate": it.expirationDate.map { $0.timeIntervalSince1970 * 1000 } as Any? ?? NSNull(), "purchaseDate": it.purchaseDate.map { $0.timeIntervalSince1970 * 1000 } as Any? ?? NSNull(), "createdAt": it.createdAt, "updatedAt": Date().timeIntervalSince1970 * 1000, "updatedBy": "manual"]
+        ["id": it.id, "name": it.name, "qty": NSDecimalNumber(decimal: it.qty), "unit": it.unit, "category": it.category, "lowAt": it.lowAt.map { NSDecimalNumber(decimal: $0) as Any } ?? NSNull(), "barcode": it.barcode as Any? ?? NSNull(), "brand": it.brand as Any? ?? NSNull(), "notes": it.notes as Any? ?? NSNull(), "location": it.location as Any? ?? NSNull(), "imageURL": it.imageURL as Any? ?? NSNull(), "dateKind": it.dateKind as Any? ?? NSNull(), "expirationDate": it.expirationDate.map { $0.timeIntervalSince1970 * 1000 } as Any? ?? NSNull(), "purchaseDate": it.purchaseDate.map { $0.timeIntervalSince1970 * 1000 } as Any? ?? NSNull(), "createdAt": it.createdAt, "updatedAt": it.updatedAt, "updatedBy": "manual"]
     }
     func refresh() async {
         guard !busy, user != nil else { return }; busy = true; defer { busy = false }
@@ -181,7 +182,8 @@ struct DeviceState: Codable {
             status = "Connected · Logbook not checked"; try persist()
         } catch { status = "Stale · offline or access denied"; self.error = error.localizedDescription }
     }
-    func save(_ it: InventoryItem) async throws {
+    func save(_ input: InventoryItem) async throws {
+        var it = input; it.updatedAt = Date().timeIntervalSince1970 * 1000
         guard !it.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, it.qty >= 0, it.lowAt.map({ $0 >= 0 }) ?? true else { throw InventoryError.invalidQuantity }
         if user != nil {
             // Editing metadata must never overwrite quantity updated concurrently on another device.
@@ -274,6 +276,7 @@ struct DeviceState: Codable {
         await refresh(); guard !status.hasPrefix("Stale") else { return }
         busy = true; defer { busy = false }
         do {
+            guard let start = meta["state"]?["startDate"] as? String, start.range(of: #"^\d{4}-\d\d-\d\d$"#, options: .regularExpression) != nil else { throw InventoryErrorBridge.message("Choose the first date to count Logbook food in Settings before enabling consumption synchronization") }
             let doc = try await cloud.collection("logbookV2").document(uid).getDocument(source: .server)
             guard let raw = doc.data() else { status = "Logbook disconnected · no v2 document"; return }
             let items = Dictionary(uniqueKeysWithValues: state.items.map { ($0.id, wire($0) as Any) })
@@ -349,6 +352,43 @@ struct DeviceState: Codable {
         _ = try await Auth.auth().signIn(with: GoogleAuthProvider.credential(withIDToken: token, accessToken: result.user.accessToken.tokenString))
     }
     func signOut() throws { guard !busy, state.queue.isEmpty, (state.mutations ?? []).isEmpty, (state.pendingShopping ?? []).isEmpty else { throw InventoryErrorBridge.message("Resolve queued operations before signing out") }; try Auth.auth().signOut() }
+    struct ImportPreview: Identifiable { var id = UUID(); var data: Data; var items: [InventoryItem]; var ledger: [[String: Any]]; var metadata: [String: [String: Any]]; var nativeState: DeviceState? }
+    func previewBrowserImport(_ data: Data) throws -> ImportPreview {
+        guard user == nil, state.items.isEmpty, history.isEmpty else { throw InventoryErrorBridge.message("Import requires an empty device-only pantry. Existing data will never be replaced.") }
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any], let rawItems = object["items"] as? [String: [String: Any]], let rawLedger = object["ledger"] as? [String: [String: Any]], let metadata = object["meta"] as? [String: [String: Any]] else { throw InventoryErrorBridge.message("Select a complete pantry:local JSON backup with items, ledger and meta. The read-only nightly summary is not a restorable backup.") }
+        var items: [InventoryItem] = []
+        for (id, fields) in rawItems {
+            guard !id.isEmpty, !id.contains("/"), let name = fields["name"] as? String, !name.isEmpty, let qty = fields["qty"] as? NSNumber, qty.doubleValue.isFinite, qty.doubleValue >= 0, let unit = fields["unit"] as? String, Measures.units.contains(unit) else { throw InventoryErrorBridge.message("Import contains an invalid item: \(id)") }
+            items.append(item(id, raw: fields))
+        }
+        let ledger = try rawLedger.map { id, fields -> [String: Any] in
+            guard !id.isEmpty, !id.contains("/"), fields["itemId"] is String, let delta = fields["delta"] as? NSNumber, delta.doubleValue.isFinite else { throw InventoryErrorBridge.message("Import contains an invalid ledger record: \(id)") }
+            return fields.merging(["id": id]) { _, new in new }
+        }
+        var nativeState: DeviceState?
+        if let json = object["nativeState"] as? String, let payload = json.data(using: .utf8) {
+            let decoded = try JSONDecoder().decode(DeviceState.self, from: payload)
+            guard decoded.queue.isEmpty, (decoded.mutations ?? []).isEmpty, (decoded.pendingShopping ?? []).isEmpty else { throw InventoryErrorBridge.message("Resolve queued cloud changes before importing a native backup") }
+            nativeState = decoded
+        }
+        return ImportPreview(data: data, items: items, ledger: ledger, metadata: metadata, nativeState: nativeState)
+    }
+    func importBrowser(_ preview: ImportPreview) throws {
+        _ = try previewBrowserImport(preview.data) // Recheck destination at confirmation time.
+        let originalState = state, originalHistory = history, originalMeta = meta
+        do {
+            if let imported = preview.nativeState { state = imported }
+            state.items = preview.items; state.originalImportData = preview.data; history = preview.ledger; meta = preview.metadata
+            try persist()
+        } catch { state = originalState; history = originalHistory; meta = originalMeta; throw error }
+    }
+    func exportBackup() throws -> URL {
+        var object: [String: Any] = ["format":"Pantry native backup v1", "items": Dictionary(uniqueKeysWithValues: state.items.map { ($0.id, wire($0)) }), "ledger": Dictionary(uniqueKeysWithValues: history.compactMap { row in guard let id = row["id"] as? String else { return nil }; return (id, row) }), "meta": meta]
+        object["nativeState"] = String(data: try JSONEncoder().encode(state), encoding: .utf8)!
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("Pantry-backup.json")
+        try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]).write(to: url, options: [.atomic, .completeFileProtection])
+        return url
+    }
     func clearDevice() throws {
         guard user == nil else { throw InventoryErrorBridge.message("Sign out before removing device-only data") }
         state = DeviceState(); history = []; meta = [:]; try persist()
