@@ -31,6 +31,7 @@ struct DeviceState: Codable {
     @Published var error: String?
     @Published var busy = false
     @Published var user: User?
+    @Published var authenticationReady = false
     @Published var lastSync: Date?
     @Published var route = "home"
     @Published var intentRequest: IntentRequest?
@@ -63,6 +64,8 @@ struct DeviceState: Codable {
     }
     private var context: ModelContext?
     private var listener: AuthStateDidChangeListenerHandle?
+    private var reminderTask: Task<Void, Never>?
+    var notificationScope: String { accountTag }
     private var account = "device"
     private var accountTag: String { SHA256.hash(data: Data(account.utf8)).map { String(format: "%02x", $0) }.joined() }
     private var cloud: Firestore? { FirebaseApp.app() == nil ? nil : Firestore.firestore() }
@@ -80,15 +83,15 @@ struct DeviceState: Codable {
                     guard let self else { return }
                     self.user = user; self.account = user?.uid ?? "device"
                     self.state = DeviceState(); self.history = []; self.meta = [:]; self.lastSync = nil
-                    self.loadLocal(); self.status = user == nil ? "Device only" : "Pending synchronization"
+                    self.loadLocal(); self.authenticationReady = true; self.status = user == nil ? "Device only" : "Pending synchronization"
                     if user != nil { await self.refresh() }
                     await self.applyWidgetCommands()
                 }
             }
-        }
+        } else { authenticationReady = true }
     }
-    private func snapshot() throws -> LocalSnapshot? {
-        guard let context else { return nil }; let key = account
+    private func snapshot(for accountKey: String? = nil) throws -> LocalSnapshot? {
+        guard let context else { return nil }; let key = accountKey ?? account
         return try context.fetch(FetchDescriptor<LocalSnapshot>(predicate: #Predicate { $0.account == key })).first
     }
     private func loadLocal() {
@@ -123,6 +126,14 @@ struct DeviceState: Codable {
         try context.save()
         publishWidget()
         WatchBridge.shared.publish(state: state)
+        if UserDefaults.standard.bool(forKey: "remindersEnabled") {
+            reminderTask?.cancel()
+            let items = state.items, scope = accountTag
+            reminderTask = Task {
+                do { try await Task.sleep(for: .milliseconds(400)); try Task.checkCancellation(); try await ReminderService.configure(items: items, scope: scope) }
+                catch is CancellationError {} catch { self.error = "Reminders could not be refreshed: \(error.localizedDescription)" }
+            }
+        }
     }
     func perform(_ action: () async throws -> Void) async { do { try await action() } catch { self.error = error.localizedDescription } }
     private func collection(_ name: String) throws -> CollectionReference {
@@ -156,7 +167,12 @@ struct DeviceState: Codable {
                         do { if !(try tx.getDocument(ref).exists) { tx.setData(fields, forDocument: ref) }; return nil }
                         catch { pointer?.pointee = error as NSError; return nil }
                     }
-                } else { try await ref.setData(fields, merge: true) }
+                } else {
+                    _ = try await cloud!.runTransaction { tx, pointer in
+                        do { guard try tx.getDocument(ref).exists else { throw InventoryError.missingItem }; tx.updateData(fields, forDocument: ref); return nil }
+                        catch { pointer?.pointee = error as NSError; return nil }
+                    }
+                }
                 state.mutations?.removeAll { $0.id == mutation.id }; try persist()
             }
             for row in state.pendingShopping ?? [] {
@@ -173,6 +189,7 @@ struct DeviceState: Codable {
             state.items = items.documents.map { item($0.documentID, raw: $0.data()) }
             history = ledger.documents.map { $0.data().merging(["id": $0.documentID]) { _, new in new } }
             meta = Dictionary(uniqueKeysWithValues: metadata.documents.map { ($0.documentID, $0.data()) })
+            if let last = meta["state"]?["nativeLastSuccessfulSync"] as? Double { lastSync = Date(timeIntervalSince1970: last / 1000) }
             if let rows = meta["nativeShopping"] {
                 state.shopping = try rows.filter { $0.key != "payload" }.compactMap { _, value in
                     guard let json = value as? String, let data = json.data(using: .utf8) else { return nil }
@@ -183,6 +200,7 @@ struct DeviceState: Codable {
         } catch { status = "Stale · offline or access denied"; self.error = error.localizedDescription }
     }
     func save(_ input: InventoryItem) async throws {
+        guard !busy else { throw InventoryErrorBridge.message("Wait for synchronization to finish") }
         var it = input; it.updatedAt = Date().timeIntervalSince1970 * 1000
         guard !it.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, it.qty >= 0, it.lowAt.map({ $0 >= 0 }) ?? true else { throw InventoryError.invalidQuantity }
         if user != nil {
@@ -199,11 +217,13 @@ struct DeviceState: Codable {
         if user != nil { await refresh() }
     }
     func delete(_ id: String) async throws {
+        guard !busy else { throw InventoryErrorBridge.message("Wait for synchronization to finish") }
         guard !state.queue.contains(where: { $0.itemId == id }), !(state.mutations ?? []).contains(where: { $0.itemID == id }) else { throw InventoryErrorBridge.message("Synchronize pending changes before deleting this item") }
         if user != nil { try await collection("items").document(id).delete() }
         state.items.removeAll { $0.id == id }; try persist() // Historical ledger deliberately retained.
     }
     func adjust(_ op: Adjustment) async throws {
+        guard !busy else { throw InventoryErrorBridge.message("Wait for synchronization to finish") }
         guard !op.delta.isNaN, state.items.contains(where: { $0.id == op.itemId }) else { throw InventoryError.invalidQuantity }
         if user != nil {
             if !state.queue.contains(where: { $0.id == op.id }) { state.queue.append(op); try persist() }
@@ -276,6 +296,7 @@ struct DeviceState: Codable {
         await refresh(); guard !status.hasPrefix("Stale") else { return }
         busy = true; defer { busy = false }
         do {
+            guard meta["nativeMigration"]?["phase"] as? String != "pending" else { throw InventoryErrorBridge.message("Finish or resume the reviewed device migration before synchronizing Logbook") }
             guard let start = meta["state"]?["startDate"] as? String, start.range(of: #"^\d{4}-\d\d-\d\d$"#, options: .regularExpression) != nil else { throw InventoryErrorBridge.message("Choose the first date to count Logbook food in Settings before enabling consumption synchronization") }
             let doc = try await cloud.collection("logbookV2").document(uid).getDocument(source: .server)
             guard let raw = doc.data() else { status = "Logbook disconnected · no v2 document"; return }
@@ -294,7 +315,7 @@ struct DeviceState: Codable {
                     meta["inbox"]?.removeValue(forKey: key)
                 }
             }
-            try await setMeta("state", fields: ["lastCheck": Date().timeIntervalSince1970 * 1000])
+            try await setMeta("state", fields: ["lastCheck": Date().timeIntervalSince1970 * 1000, "nativeLastSuccessfulSync": Date().timeIntervalSince1970 * 1000])
             lastSync = Date(); status = "Connected · Logbook v2"; try persist()
             busy = false; await refresh(); status = "Connected · Logbook v2"
         } catch { status = "Logbook pending · review required"; self.error = error.localizedDescription }
@@ -339,10 +360,12 @@ struct DeviceState: Codable {
         await ShoppingSession.update(completed: state.shopping.filter(\.purchased).count, total: state.shopping.count)
     }
     func email(_ email: String, password: String, create: Bool) async throws {
+        guard authenticationReady, !busy else { throw InventoryErrorBridge.message("Wait for account restoration or synchronization") }
         guard configured else { throw InventoryErrorBridge.message("Install the iOS GoogleService-Info.plist first") }
         if create { _ = try await Auth.auth().createUser(withEmail: email, password: password) } else { _ = try await Auth.auth().signIn(withEmail: email, password: password) }
     }
     func google() async throws {
+        guard authenticationReady, !busy else { throw InventoryErrorBridge.message("Wait for account restoration or synchronization") }
         guard let clientID = FirebaseApp.app()?.options.clientID,
               let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
               let root = scene.windows.first(where: { $0.isKeyWindow })?.rootViewController else { throw InventoryErrorBridge.message("Google sign-in needs the registered iOS Firebase client and URL scheme") }
@@ -352,6 +375,74 @@ struct DeviceState: Codable {
         _ = try await Auth.auth().signIn(with: GoogleAuthProvider.credential(withIDToken: token, accessToken: result.user.accessToken.tokenString))
     }
     func signOut() throws { guard !busy, state.queue.isEmpty, (state.mutations ?? []).isEmpty, (state.pendingShopping ?? []).isEmpty else { throw InventoryErrorBridge.message("Resolve queued operations before signing out") }; try Auth.auth().signOut() }
+    struct CloudMigrationPreview: Identifiable {
+        var id = UUID(); var source: DeviceState; var digest: String
+        var history: [[String: Any]]; var metadata: [String: [String: Any]]
+    }
+    func previewDeviceMigration() throws -> CloudMigrationPreview {
+        guard user != nil, let saved = try snapshot(for: "device") else { throw InventoryErrorBridge.message("No device-only pantry is available to import") }
+        let source = try JSONDecoder().decode(DeviceState.self, from: saved.payload)
+        guard source.queue.isEmpty, (source.mutations ?? []).isEmpty, (source.pendingShopping ?? []).isEmpty else { throw InventoryErrorBridge.message("The source has unresolved queued changes") }
+        let ledger = try JSONSerialization.jsonObject(with: source.ledgerData) as? [[String: Any]] ?? []
+        let metadata = try JSONSerialization.jsonObject(with: source.metaData) as? [String: [String: Any]] ?? [:]
+        let digest = SHA256.hash(data: saved.payload).map { String(format: "%02x", $0) }.joined()
+        return CloudMigrationPreview(source: source, digest: digest, history: ledger, metadata: metadata)
+    }
+    func migrateDevice(_ preview: CloudMigrationPreview) async throws {
+        guard user != nil, !busy else { throw InventoryErrorBridge.message("Sign in and wait for synchronization before migrating") }
+        busy = true; defer { busy = false }
+        let marker = try collection("meta").document("nativeMigration")
+        let previous = try await marker.getDocument(source: .server).data()
+        if previous?["digest"] as? String == preview.digest, previous?["phase"] as? String == "complete" { return }
+        if previous?["digest"] as? String != preview.digest {
+            let inventory = try await collection("items").getDocuments(source: .server)
+            let ledger = try await collection("ledger").getDocuments(source: .server)
+            guard inventory.isEmpty, ledger.isEmpty, previous == nil else { throw InventoryErrorBridge.message("Cloud migration requires an empty pantry or a matching interrupted migration. Nothing was replaced.") }
+        }
+        _ = try await cloud!.runTransaction { tx, pointer in
+            do {
+                if let current = try tx.getDocument(marker).data(), current["digest"] as? String != preview.digest { throw InventoryError.conflict }
+                tx.setData(["digest": preview.digest, "phase": "pending"], forDocument: marker, merge: true); return nil
+            } catch { pointer?.pointee = error as NSError; return nil }
+        }
+        // Import deduplication history FIRST. Retries never overwrite an existing record.
+        for row in preview.history {
+            guard let id = row["id"] as? String, !id.contains("/") else { throw InventoryError.conflict }
+            try await importMissing(try collection("ledger").document(id), fields: row)
+        }
+        for item in preview.source.items {
+            var fields = wire(item); fields.removeValue(forKey: "id")
+            try await importMissing(try collection("items").document(item.id), fields: fields)
+        }
+        for (name, fields) in preview.metadata where name != "nativeMigration" {
+            try await importMissingFields(try collection("meta").document(name), fields: fields)
+        }
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        var rows: [String: Any] = [:]
+        for row in preview.source.shopping { rows[row.id] = String(data: try encoder.encode(row), encoding: .utf8)! }
+        if !rows.isEmpty { try await importMissingFields(try collection("meta").document("nativeShopping"), fields: rows) }
+        try await marker.setData(["digest": preview.digest, "phase": "complete", "completedAt": Date().timeIntervalSince1970 * 1000], merge: true)
+        busy = false; await refresh() // Device-only source and history remain intact.
+    }
+    private func importMissing(_ ref: DocumentReference, fields: [String: Any]) async throws {
+        _ = try await cloud!.runTransaction { tx, pointer in
+            do {
+                if let current = try tx.getDocument(ref).data() {
+                    guard (current as NSDictionary).isEqual(fields as NSDictionary) else { throw InventoryError.conflict }
+                } else { tx.setData(fields, forDocument: ref) }
+                return nil
+            } catch { pointer?.pointee = error as NSError; return nil }
+        }
+    }
+    private func importMissingFields(_ ref: DocumentReference, fields: [String: Any]) async throws {
+        _ = try await cloud!.runTransaction { tx, pointer in
+            do {
+                let current = try tx.getDocument(ref).data() ?? [:]
+                for (key, value) in fields { if let existing = current[key], !(NSDictionary(dictionary: ["v":existing])).isEqual(NSDictionary(dictionary: ["v":value])) { throw InventoryError.conflict } }
+                tx.setData(fields, forDocument: ref, merge: true); return nil
+            } catch { pointer?.pointee = error as NSError; return nil }
+        }
+    }
     struct ImportPreview: Identifiable { var id = UUID(); var data: Data; var items: [InventoryItem]; var ledger: [[String: Any]]; var metadata: [String: [String: Any]]; var nativeState: DeviceState? }
     func previewBrowserImport(_ data: Data) throws -> ImportPreview {
         guard user == nil, state.items.isEmpty, history.isEmpty else { throw InventoryErrorBridge.message("Import requires an empty device-only pantry. Existing data will never be replaced.") }
@@ -394,6 +485,7 @@ struct DeviceState: Codable {
         state = DeviceState(); history = []; meta = [:]; try persist()
     }
     func applyWidgetCommands() async {
+        guard authenticationReady, !busy else { return }
         guard let directory = try? WidgetStorage.directory(), let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else { return }
         for file in files where file.pathExtension == "json" {
             do {
@@ -413,7 +505,7 @@ struct DeviceState: Codable {
             shopping: state.shopping.filter { !$0.purchased }.map { .init(id: $0.id, title: $0.name, detail: NSDecimalNumber(decimal: $0.quantity).stringValue) },
             expiry: expiring.map { .init(id: $0.id, title: $0.name, detail: $0.expirationDate?.formatted(date: .abbreviated, time: .omitted) ?? "Unknown") },
             recentlyEaten: recent.map { .init(id: $0["id"] as? String ?? UUID().uuidString, title: $0["itemName"] as? String ?? "Food", detail: String(describing: $0["delta"] ?? "")) },
-            inboxCount: inbox.count, updated: Date())
+            inboxCount: inbox.count, updated: Date(), syncStatus: status, lastSuccessfulSync: lastSync)
         if let data = try? JSONEncoder().encode(snapshot) { WidgetStorage.defaults?.set(data, forKey: "snapshot") }
         guard let defaults = UserDefaults(suiteName: "group.dev.jacksonwilson.pantry") else { return }
         defaults.set(low.count, forKey: "low"); defaults.set(expiring.count, forKey: "expiry"); defaults.set(inbox.count, forKey: "inbox")

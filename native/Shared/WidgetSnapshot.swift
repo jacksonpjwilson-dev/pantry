@@ -9,6 +9,8 @@ struct WidgetSnapshot: Codable {
     var recentlyEaten: [Row]
     var inboxCount: Int
     var updated: Date
+    var syncStatus: String? = nil
+    var lastSuccessfulSync: Date? = nil
 }
 struct WidgetPurchaseCommand: Codable {
     var id = UUID().uuidString

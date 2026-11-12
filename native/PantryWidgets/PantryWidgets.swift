@@ -29,12 +29,16 @@ struct Overview: View {
     var icon: String { kind == "shopping" ? "cart" : kind == "expiry" ? "calendar" : kind == "inbox" ? "link" : "leaf" }
     var body: some View {
         Group {
-            if family == .accessoryInline { Text("\(title): \(count)") }
+            if kind == "sync" {
+                VStack { Image(systemName: "arrow.triangle.2.circlepath"); Text(entry.detail?.syncStatus ?? "Open Pantry").font(.caption).lineLimit(2)
+                    if family == .systemMedium || family == .systemLarge, let last = entry.detail?.lastSuccessfulSync { Text(last, style: .relative).font(.caption) }
+                }
+            } else if family == .accessoryInline { Text("\(title): \(count)") }
             else if family == .accessoryCircular { Gauge(value: Double(count), in: 0...Double(max(1, count))) { Image(systemName: icon) } currentValueLabel: { Text("\(count)") } }
             else {
                 VStack(alignment: .leading, spacing: 8) {
                     Label(title, systemImage: icon).font(.headline)
-                    Text(entry.updated == nil ? "—" : "\(count)").font(.largeTitle.bold())
+                    Text(entry.updated == nil ? "—" : "\(count)").font(family == .systemSmall ? .largeTitle.bold() : .title2.bold())
                     if family == .systemMedium || family == .systemLarge {
                         if let snapshot = entry.detail {
                             let rows = kind == "shopping" ? snapshot.shopping : kind == "expiry" ? snapshot.expiry : kind == "recent" ? snapshot.recentlyEaten : snapshot.low
@@ -57,6 +61,8 @@ struct Overview: View {
 struct CountWidget: Widget {
     var kind: String
     var title: String
+    init() { kind = "low"; title = "Low stock" }
+    init(kind: String, title: String) { self.kind = kind; self.title = title }
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "pantry." + kind, provider: Provider()) { entry in Overview(entry: entry, kind: kind) }
             .configurationDisplayName(title).description("Cached Pantry counts. Open the app to synchronize.")
@@ -71,5 +77,6 @@ struct CountWidget: Widget {
         CountWidget(kind: "expiry", title: "Recorded dates")
         CountWidget(kind: "inbox", title: "Link inbox")
         CountWidget(kind: "recent", title: "Recently eaten")
+        CountWidget(kind: "sync", title: "Synchronization")
     }
 }

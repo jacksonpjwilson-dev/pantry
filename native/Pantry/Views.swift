@@ -28,7 +28,7 @@ struct RootView: View {
                 Text("Account: \(store.user?.email ?? "This device only")")
                 Text("\(request.name) · \(number(request.quantity))")
                 Text(request.kind == "inventory" ? "Adds quantity in the food's existing inventory unit." : request.kind == "purchase" ? "Marks the shopping item complete without adding inventory." : "Adds a shopping item.")
-                Button("Confirm") { Task { await store.perform { try await store.confirmIntent(request); store.intentRequest = nil } } }
+                Button("Confirm") { Task { await store.perform { try await store.confirmIntent(request); store.intentRequest = nil } } }.disabled(!store.authenticationReady || store.busy)
                 Button("Cancel", role: .cancel) { store.intentRequest = nil }
             }.navigationTitle("Shortcut action") }
         }
@@ -275,11 +275,13 @@ struct SettingsView: View {
     @State var importing = false
     @State var preview: PantryStore.ImportPreview?
     @State var backupURL: URL?
+    @State var cloudPreview: PantryStore.CloudMigrationPreview?
     @State var startDate = Date()
     @AppStorage("autoLowShopping") var autoLowShopping = false
     @AppStorage("notifyLow") var notifyLow = true
     @AppStorage("notifyExpiry") var notifyExpiry = true
     @AppStorage("quietStart") var quietStart = 22
+    @AppStorage("expiryDays") var expiryDays = 3
     @AppStorage("quietEnd") var quietEnd = 8
     var body: some View {
         Form {
@@ -289,9 +291,9 @@ struct SettingsView: View {
                     Text("Device-only inventory stays separate when you sign in. No automatic migration or cloud replacement occurs.").font(.caption)
                     TextField("Email", text: $email).textContentType(.emailAddress).textInputAutocapitalization(.never)
                     SecureField("Password", text: $password); Toggle("Create account", isOn: $create)
-                    Button(create ? "Create account" : "Sign in") { Task { await store.perform { try await store.email(email, password: password, create: create) } } }.disabled(!store.configured)
-                    Button("Sign in with Google") { Task { await store.perform { try await store.google() } } }.disabled(!store.configured)
-                    Button("Send password reset") { Task { await store.perform { guard store.configured else { return }; try await Auth.auth().sendPasswordReset(withEmail: email) } } }.disabled(!store.configured)
+                    Button(create ? "Create account" : "Sign in") { Task { await store.perform { try await store.email(email, password: password, create: create) } } }.disabled(!store.configured || !store.authenticationReady || store.busy)
+                    Button("Sign in with Google") { Task { await store.perform { try await store.google() } } }.disabled(!store.configured || !store.authenticationReady || store.busy)
+                    Button("Send password reset") { Task { await store.perform { guard store.configured else { return }; try await Auth.auth().sendPasswordReset(withEmail: email) } } }.disabled(!store.configured || !store.authenticationReady || store.busy)
                 }
                 if !store.configured { Text("Cloud not configured: add the registered iOS Firebase plist. Device-only mode works without it.").font(.caption) }
             }
@@ -308,12 +310,14 @@ struct SettingsView: View {
             Section("Notifications") {
                 Toggle("Low-stock reminders", isOn: $notifyLow)
                 Toggle("Recorded date reminders", isOn: $notifyExpiry)
+                Picker("Days before recorded date", selection: $expiryDays) { Text("Three").tag(3); Text("Seven").tag(7) }
                 Stepper("Quiet hours start: \(quietStart):00", value: $quietStart, in: 0...23)
                 Stepper("Quiet hours end: \(quietEnd):00", value: $quietEnd, in: 0...23)
-                Button("Enable low-stock and date reminders") { Task { await store.perform { try await ReminderService.configure(items: store.state.items) } } }; Text("Optional local reminders use recorded dates. Open Pantry to update reminders after cloud changes.").font(.caption) }
+                Button("Enable low-stock and date reminders") { Task { await store.perform { try await ReminderService.configure(items: store.state.items, scope: store.notificationScope) } } }; Text("Optional local reminders use recorded dates. Open Pantry to update reminders after cloud changes.").font(.caption) }
             Section("Backups and migration") {
                 Button("Prepare a private backup") { Task { await store.perform { backupURL = try store.exportBackup() } } }
                 if let url = backupURL { ShareLink("Share backup", item: url) }
+                if store.user != nil { Button("Review device-only import into cloud") { do { cloudPreview = try store.previewDeviceMigration() } catch { store.error = error.localizedDescription } } }
                 Button("Import complete browser/device backup") { importing = true }.disabled(store.user != nil || !store.state.items.isEmpty || !store.history.isEmpty)
                 Text("Import requires an empty device-only pantry and a complete backup. Review counts before confirming. Account sign-in never uploads it automatically.").font(.caption)
             }
@@ -322,6 +326,13 @@ struct SettingsView: View {
         .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { result in
             do { let url = try result.get(); let scoped = url.startAccessingSecurityScopedResource(); defer { if scoped { url.stopAccessingSecurityScopedResource() } }; preview = try store.previewBrowserImport(Data(contentsOf: url)) } catch { store.error = error.localizedDescription }
         }
+        .sheet(item: $cloudPreview) { candidate in NavigationStack { Form {
+            Text("Destination: \(store.user?.email ?? "Signed-in account")")
+            Text("Import \(candidate.source.items.count) items, \(candidate.history.count) transactions and \(candidate.source.shopping.count) shopping records. The cloud pantry must be empty; existing records are never replaced. The device copy remains intact.")
+            Text("An interrupted import can be resumed using this same device snapshot. Logbook sync is paused while the migration marker is pending.").font(.caption)
+            Button("Confirm cloud import") { Task { await store.perform { try await store.migrateDevice(candidate); cloudPreview = nil } } }.disabled(store.busy)
+            Button("Cancel", role: .cancel) { cloudPreview = nil }.disabled(store.busy)
+        }.navigationTitle("Review cloud migration") } }
         .sheet(item: $preview) { candidate in NavigationStack { Form {
             Text("Import \(candidate.items.count) foods and \(candidate.ledger.count) historical transactions into this empty device-only pantry.")
             Text("Existing item and ledger identifiers will be retained. A copy of the original file is retained in the native backup.")

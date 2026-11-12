@@ -10,10 +10,16 @@ import UserNotifications
         guard quiet else { return date }
         return calendar.nextDate(after: date, matching: DateComponents(hour: end, minute: 0), matchingPolicy: .nextTime) ?? date
     }
-    static func configure(items: [InventoryItem]) async throws {
+    static func configure(items: [InventoryItem], scope: String) async throws {
         let center = UNUserNotificationCenter.current()
         guard try await center.requestAuthorization(options: [.alert, .sound, .badge]) else { return }
         let defaults = UserDefaults.standard
+        if defaults.string(forKey: "pantry-reminder-scope") != scope {
+            let old = await center.pendingNotificationRequests()
+            center.removePendingNotificationRequests(withIdentifiers: old.filter { $0.identifier.hasPrefix("pantry-") }.map(\.identifier))
+            for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("pantry-low-") { defaults.removeObject(forKey: key) }
+            defaults.set(scope, forKey: "pantry-reminder-scope")
+        }
         defaults.set(true, forKey: "remindersEnabled")
         var requests: [UNNotificationRequest] = []
         let pending = await center.pendingNotificationRequests()
@@ -26,7 +32,7 @@ import UserNotifications
                 let content = UNMutableNotificationContent(); content.title = "Pantry is running low"; content.body = "Check your low-stock foods in Pantry."; content.sound = .default
                 requests.append(UNNotificationRequest(identifier: key, content: content, trigger: UNTimeIntervalNotificationTrigger(timeInterval: max(2, allowedDate(Date().addingTimeInterval(2)).timeIntervalSinceNow), repeats: false)))
             }
-            if notifyExpiry, let date = item.expirationDate, item.qty > 0, let reminder = Calendar.current.date(byAdding: .day, value: -3, to: date), reminder > Date() {
+            if notifyExpiry, let date = item.expirationDate, item.qty > 0, let reminder = Calendar.current.date(byAdding: .day, value: -(defaults.object(forKey: "expiryDays") as? Int ?? 3), to: date), reminder > Date() {
                 let content = UNMutableNotificationContent(); content.title = "A recorded food date is approaching"; content.body = "Check recorded dates in Pantry. Dates alone do not determine food safety."
                 requests.append(UNNotificationRequest(identifier: "pantry-expiry-" + item.id, content: content, trigger: UNCalendarNotificationTrigger(dateMatching: Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: allowedDate(reminder)), repeats: false)))
             }
