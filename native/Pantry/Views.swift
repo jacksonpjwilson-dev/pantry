@@ -5,6 +5,10 @@ import Charts
 import UniformTypeIdentifiers
 
 private func number(_ value: Decimal) -> String { NSDecimalNumber(decimal: value).stringValue }
+private func recordedQuantity(_ source: [String: Any]) -> String {
+    if let amount = source["amt"], !(amount is NSNull) { return "\(amount) \(source["unit"] as? String ?? "recorded units")" }
+    return "\(source["q"] ?? 1) servings"
+}
 let categories = ["Fridge", "Freezer", "Pantry", "Produce", "Dairy", "Meat and fish", "Breakfast", "Baking", "Spices", "Snacks", "Drinks", "Household", "Other"]
 struct RootView: View {
     @EnvironmentObject var store: PantryStore
@@ -235,7 +239,7 @@ struct InboxView: View {
             Text("Confirm how much one logged serving uses. No uncertain matches are applied automatically.").font(.caption).foregroundStyle(.secondary)
             ForEach(store.inbox.keys.sorted(), id: \.self) { key in
                 let source = store.inbox[key] ?? [:]
-                Button { chosen = String(describing: source["fid"] ?? "") } label: { VStack(alignment: .leading) { Text(source["food"] as? String ?? "Unknown food"); Text("\(source["date"] ?? "") · \(source["amt"] ?? source["q"] ?? 1) \(source["unit"] ?? "servings")").font(.caption) } }
+                Button { chosen = String(describing: source["fid"] ?? "") } label: { VStack(alignment: .leading) { Text(source["food"] as? String ?? "Unknown food"); Text("\(source["date"] ?? "") · \(recordedQuantity(source))").font(.caption) } }
             }
             if store.inbox.isEmpty { ContentUnavailableView("All linked", systemImage: "link", description: Text("Unrecognized Logbook foods appear here after synchronization.")) }
         }.navigationTitle("Link inbox").refreshable { await store.syncLogbook() }
@@ -264,8 +268,9 @@ struct HistoryView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(row["itemName"] as? String ?? "Removed item").font(.headline)
                 Text("\(row["qtyBefore"] ?? 0) → \(row["qtyAfter"] ?? 0) \(row["unit"] ?? "") · \(row["reason"] ?? "")")
+                if let shortfall = row["unfulfilled"] as? NSNumber, shortfall.doubleValue != 0 { Text("Requested change: \(row["requestedDelta"] ?? "") \(row["unit"] ?? "") · Applied: \(row["delta"] ?? "") \(row["unit"] ?? "")").font(.caption) }
                 Text(Date(timeIntervalSince1970: (row["ts"] as? Double ?? 0) / 1000).formatted()).font(.caption).foregroundStyle(.secondary)
-                if let source = row["source"] as? [String: Any], let food = source["food"] as? String { Text("Logbook: \(food) · \(source["date"] ?? "")").font(.caption) }
+                if let source = row["source"] as? [String: Any], let food = source["food"] as? String { Text("Logbook: \(food) · \(recordedQuantity(source)) · \(source["date"] ?? "")").font(.caption) }
                 if row["undone"] as? Bool != true, let id = row["id"] as? String { Button("Undo") { Task { await store.perform { try await store.undo(id) } } }.font(.caption) }
             }.padding(.vertical, 4)
         }.navigationTitle("History").searchable(text: $search)
@@ -283,6 +288,8 @@ struct SettingsView: View {
     @State var preview: PantryStore.ImportPreview?
     @State var backupURL: URL?
     @State var cloudPreview: PantryStore.CloudMigrationPreview?
+    struct PendingReview { var kind: String; var id: String }
+    @State var pendingReview: PendingReview?
     @State var startDate = Date()
     @AppStorage("autoLowShopping") var autoLowShopping = false
     @AppStorage("notifyShopping") var notifyShopping = false
@@ -311,6 +318,13 @@ struct SettingsView: View {
                 Button("Save consumption start date") { Task { await store.perform { let formatter = DateFormatter(); formatter.calendar = Calendar(identifier: .gregorian); formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyy-MM-dd"; try await store.setMeta("state", fields: ["startDate": formatter.string(from: startDate)]) } } }
                 Text("Saved start date: \(store.meta["state"]?["startDate"] as? String ?? "Choose a date before syncing")").font(.caption)
                 Text(store.status); Text("\(store.state.queue.count) queued quantity changes"); Button("Refresh inventory") { Task { await store.refresh() } }; Button("Check Logbook v2") { Task { await store.syncLogbook() } }; Text("Sync runs while Pantry is active. Native Logbook and Head Quarter adapters are not configured.").font(.caption) }
+            if !store.state.queue.isEmpty || !(store.state.mutations ?? []).isEmpty || !(store.state.pendingShopping ?? []).isEmpty {
+                Section("Review pending changes") {
+                    ForEach(store.state.queue) { operation in Button("Quantity: \(operation.reason) \(number(operation.delta))") { pendingReview = PendingReview(kind: "quantity", id: operation.id) }.disabled(store.busy) }
+                    ForEach(store.state.mutations ?? []) { operation in Button("Item details: \(store.state.items.first(where: { $0.id == operation.itemID })?.name ?? "Removed item")") { pendingReview = PendingReview(kind: "item", id: operation.id) }.disabled(store.busy) }
+                    ForEach(store.state.pendingShopping ?? []) { row in Button("Shopping: \(row.name)") { pendingReview = PendingReview(kind: "shopping", id: row.id) }.disabled(store.busy) }
+                }
+            }
             if let links = store.meta["links"], !links.isEmpty {
                 Section("Linked Logbook foods") { ForEach(links.keys.sorted(), id: \.self) { fid in
                     let link = links[fid] as? [String: Any] ?? [:]
@@ -359,6 +373,9 @@ struct SettingsView: View {
             Button("Confirm import") { Task { await store.perform { try store.importBrowser(candidate); preview = nil } } }
             Button("Cancel", role: .cancel) { preview = nil }
         }.navigationTitle("Review backup") } }
+        .confirmationDialog("Keep the current cloud result?", isPresented: Binding(get: { pendingReview != nil }, set: { if !$0 { pendingReview = nil } })) {
+            if let review = pendingReview { Button("Keep cloud data and stop retrying", role: .destructive) { Task { await store.perform { try await store.resolvePending(kind: review.kind, id: review.id); pendingReview = nil } } } }
+        } message: { Text("Already saved changes remain in the cloud. The selected pending request will stop retrying after Pantry verifies the server. Use History to undo an applied quantity change.") }
         .confirmationDialog("Remove this device's local inventory and history?", isPresented: $remove) { Button("Remove", role: .destructive) { Task { await store.perform { try store.clearDevice() } } } }
     }
 }

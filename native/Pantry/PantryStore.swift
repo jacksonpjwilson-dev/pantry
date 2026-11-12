@@ -70,6 +70,11 @@ struct DeviceState: Codable {
     private var reminderTask: Task<Void, Never>?
     var notificationScope: String { accountTag }
     private var activeOperations = 0
+    private var refreshAgain = false
+    private func finishBusy() {
+        busy = false
+        if refreshAgain { refreshAgain = false; Task { await self.refresh() } }
+    }
     private var account = "device"
     private var accountTag: String { SHA256.hash(data: Data(account.utf8)).map { String(format: "%02x", $0) }.joined() }
     private var cloud: Firestore? { FirebaseApp.app() == nil ? nil : Firestore.firestore() }
@@ -163,7 +168,7 @@ struct DeviceState: Codable {
         ["id": it.id, "name": it.name, "qty": NSDecimalNumber(decimal: it.qty), "unit": it.unit, "category": it.category, "lowAt": it.lowAt.map { NSDecimalNumber(decimal: $0) as Any } ?? NSNull(), "barcode": it.barcode as Any? ?? NSNull(), "brand": it.brand as Any? ?? NSNull(), "notes": it.notes as Any? ?? NSNull(), "location": it.location as Any? ?? NSNull(), "imageURL": it.imageURL as Any? ?? NSNull(), "dateKind": it.dateKind as Any? ?? NSNull(), "expirationDate": it.expirationDate.map { $0.timeIntervalSince1970 * 1000 } as Any? ?? NSNull(), "purchaseDate": it.purchaseDate.map { $0.timeIntervalSince1970 * 1000 } as Any? ?? NSNull(), "createdAt": it.createdAt, "updatedAt": it.updatedAt, "updatedBy": "manual"]
     }
     func refresh() async {
-        guard !busy, user != nil else { return }; let scope = account; busy = true; defer { busy = false }
+        guard !busy, user != nil else { return }; let scope = account; busy = true; defer { finishBusy() }
         status = "Pending synchronization"
         do {
             // Transactions need network. Pending operations remain durably queued until acknowledged.
@@ -207,6 +212,10 @@ struct DeviceState: Codable {
                     guard let json = value as? String, let data = json.data(using: .utf8) else { return nil }
                     return try JSONDecoder().decode(ShoppingItem.self, from: data)
                 }.sorted { $0.name < $1.name }
+            } else { state.shopping = [] }
+            for pending in state.pendingShopping ?? [] {
+                if let index = state.shopping.firstIndex(where: { $0.id == pending.id }) { state.shopping[index] = pending }
+                else { state.shopping.append(pending) }
             }
             status = "Connected · Logbook not checked"; try persist()
         } catch { if scope == account { status = "Stale · offline or access denied"; self.error = error.localizedDescription; try? await ReminderService.reviewNeeded(scope: accountTag, needed: true) } }
@@ -292,7 +301,7 @@ struct DeviceState: Codable {
                     let before = Decimal(string: (item["qty"] as? NSNumber)?.stringValue ?? "0") ?? 0
                     let delta = -(Decimal(string: (row["delta"] as? NSNumber)?.stringValue ?? "0") ?? 0)
                     let after = try Adjustment(itemId: itemID, delta: delta, reason: "undo").apply(to: before).after
-                    tx.setData(["id": "u_" + id, "itemId": itemID, "itemName": item["name"] ?? "", "unit": item["unit"] ?? "count", "delta": NSDecimalNumber(decimal: after - before), "qtyBefore": NSDecimalNumber(decimal: before), "qtyAfter": NSDecimalNumber(decimal: after), "reason": "undo", "source": ["of": id], "ts": Date().timeIntervalSince1970 * 1000, "undone": false], forDocument: ur)
+                    tx.setData(["id": "u_" + id, "itemId": itemID, "itemName": item["name"] ?? "", "unit": item["unit"] ?? "count", "delta": NSDecimalNumber(decimal: after - before), "qtyBefore": NSDecimalNumber(decimal: before), "qtyAfter": NSDecimalNumber(decimal: after), "requestedDelta": NSDecimalNumber(decimal: delta), "unfulfilled": NSDecimalNumber(decimal: delta - (after - before)), "reason": "undo", "source": ["of": id], "ts": Date().timeIntervalSince1970 * 1000, "undone": false], forDocument: ur)
                     tx.updateData(["undone": true], forDocument: lr); tx.updateData(["qty": NSDecimalNumber(decimal: after), "updatedAt": Date().timeIntervalSince1970 * 1000, "updatedBy": "manual"], forDocument: ir)
                     return nil
                 } catch { pointer?.pointee = error as NSError; return nil }
@@ -315,7 +324,7 @@ struct DeviceState: Codable {
         guard !busy else { return }
         guard let uid = user?.uid, let cloud else { status = "Logbook disconnected · sign in required"; return }
         await refresh(); guard !status.hasPrefix("Stale") else { return }
-        busy = true; defer { busy = false }
+        busy = true; defer { finishBusy() }
         do {
             guard meta["nativeMigration"]?["phase"] as? String != "pending" else { throw InventoryErrorBridge.message("Finish or resume the reviewed device migration before synchronizing Logbook") }
             guard let start = meta["state"]?["startDate"] as? String, start.range(of: #"^\d{4}-\d\d-\d\d$"#, options: .regularExpression) != nil else { throw InventoryErrorBridge.message("Choose the first date to count Logbook food in Settings before enabling consumption synchronization") }
@@ -358,6 +367,30 @@ struct DeviceState: Codable {
             meta["inbox"]?.removeValue(forKey: key)
         }; try persist()
     }
+    func resolvePending(kind: String, id: String) async throws {
+        guard user != nil, !busy else { throw InventoryErrorBridge.message("Connect and wait for synchronization before reviewing pending changes") }
+        let scope = account; busy = true; defer { finishBusy() }
+        let ref: DocumentReference
+        switch kind {
+        case "quantity": ref = try collection("ledger").document(id)
+        case "item":
+            guard let operation = state.mutations?.first(where: { $0.id == id }) else { return }
+            ref = try collection("items").document(operation.itemID)
+        case "shopping": ref = try collection("meta").document("nativeShopping")
+        default: throw InventoryError.conflict
+        }
+        let result = try await ref.getDocument(source: .server)
+        guard scope == account, !result.metadata.hasPendingWrites else { throw InventoryErrorBridge.message("Cloud writes are still pending. Connect and retry this review after they finish.") }
+        let previous = state
+        do {
+            if kind == "quantity" { state.queue.removeAll { $0.id == id } }
+            if kind == "item" { state.mutations?.removeAll { $0.id == id } }
+            if kind == "shopping" { state.pendingShopping?.removeAll { $0.id == id } }
+            try persist()
+        } catch { state = previous; throw error }
+        busy = false; await refresh()
+        if kind == "quantity", result.exists { error = "This change was already applied. Open History if you want to undo it." }
+    }
     func restoreIgnored(_ fid: String) async throws {
         let scope = account; activeOperations += 1; defer { activeOperations -= 1 }
         if user != nil { try await collection("meta").document("ignored").setData([fid: FieldValue.delete()], merge: true) }
@@ -376,7 +409,7 @@ struct DeviceState: Codable {
             }
         }
         try persist()
-        if user != nil { await refresh() }
+        if user != nil { if busy { refreshAgain = true } else { await refresh() } }
     }
     func purchase(_ id: String, addInventory: Bool) async throws {
         guard let i = state.shopping.firstIndex(where: { $0.id == id }) else { return }
