@@ -1,6 +1,7 @@
 import XCTest
 
 final class PantryUITests: XCTestCase {
+    override func setUpWithError() throws { continueAfterFailure = false }
     @MainActor func testOfflineInventoryPurchaseUndoAndRelaunch() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-testing"] // The app disables Firebase for this argument.

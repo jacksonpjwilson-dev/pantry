@@ -158,7 +158,7 @@ struct ItemDetail: View {
                     }
                     Section("Adjust quantity") {
                         TextField("Amount", text: $amount).keyboardType(.decimalPad)
-                        HStack { Button("Bought") { change(1, reason: "bought") }; Spacer(); Button("Used") { change(-1, reason: "manual") }; Spacer(); Button("Discard") { change(-1, reason: "discarded") } }
+                        HStack { Button("Bought") { change(1, reason: "bought") }; Spacer(); Button("Used") { change(-1, reason: "manual") }; Spacer(); Button("Discard") { change(-1, reason: "discarded") } }.buttonStyle(.borderless)
                     }
                     Button("Add to shopping list") { Task { await store.perform { if !store.state.shopping.contains(where: { $0.itemId == id && !$0.purchased }) { store.state.shopping.append(ShoppingItem(name: item.name, itemId: id)); try await store.saveShopping() } } } }
                     QuantityChart(itemID: id, unit: item.unit)
