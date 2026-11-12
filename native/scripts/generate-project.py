@@ -10,9 +10,9 @@ def obj(name, value):
 def quote(s): return '"' + s.replace('"', '\\"') + '"'
 def arr(values): return '(' + ', '.join(values) + ')'
 def settings(values): return '{' + ' '.join(k + ' = ' + quote(str(v)) + ';' for k,v in values.items()) + '}'
-app = ident('app'); widget = ident('widget'); watch = ident('watch')
-files=[]; appbuild=[]; widgetbuild=[]; watchbuild=[]; resources=[]
-for folder in ['Pantry','PantryCore','PantryWidgets','PantryWatch','Shared']:
+app = ident('app'); widget = ident('widget'); watch = ident('watch'); uitests = ident('uitests')
+files=[]; appbuild=[]; widgetbuild=[]; watchbuild=[]; uitestbuild=[]; resources=[]
+for folder in ['Pantry','PantryCore','PantryWidgets','PantryWatch','Shared','PantryUITests']:
     for p in sorted((root/folder).glob('*')):
         if p.suffix not in ['.swift','.js']: continue
         path = str(p.relative_to(root))
@@ -22,6 +22,7 @@ for folder in ['Pantry','PantryCore','PantryWidgets','PantryWatch','Shared']:
         if folder=='Shared':
             appbuild.append(build)
             widgetbuild.append(obj('widgetbuild'+path, '{isa = PBXBuildFile; fileRef = '+ref+';}'))
+        elif folder=='PantryUITests': uitestbuild.append(build)
         elif folder=='PantryWatch': watchbuild.append(build)
         elif folder=='PantryWidgets': widgetbuild.append(build)
         elif p.suffix=='.js': resources.append(build)
@@ -33,7 +34,8 @@ if plist.exists():
 appProduct=obj('appproduct','{isa = PBXFileReference; explicitFileType = wrapper.application; path = Pantry.app; sourceTree = BUILT_PRODUCTS_DIR;}')
 widgetProduct=obj('widgetproduct','{isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; path = PantryWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR;}')
 watchProduct=obj('watchproduct','{isa = PBXFileReference; explicitFileType = wrapper.application; path = PantryWatch.app; sourceTree = BUILT_PRODUCTS_DIR;}')
-products=obj('products','{isa = PBXGroup; children = '+arr([appProduct,widgetProduct,watchProduct])+'; name = Products; sourceTree = "<group>";}')
+uitestProduct=obj('uitestproduct','{isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = PantryUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR;}')
+products=obj('products','{isa = PBXGroup; children = '+arr([appProduct,widgetProduct,watchProduct,uitestProduct])+'; name = Products; sourceTree = "<group>";}')
 group=obj('group','{isa = PBXGroup; children = '+arr(files+[products])+'; sourceTree = "<group>";}')
 firebase=obj('firebase','{isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/firebase/firebase-ios-sdk.git"; requirement = {kind = upToNextMajorVersion; minimumVersion = 11.0.0;};}')
 google=obj('google','{isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/google/GoogleSignIn-iOS.git"; requirement = {kind = upToNextMajorVersion; minimumVersion = 8.0.0;};}')
@@ -57,6 +59,10 @@ watchembedbuild=obj('watchembedbuild','{isa = PBXBuildFile; fileRef = '+watchPro
 watchembed=phase('watchembed','PBXCopyFilesBuildPhase',[watchembedbuild],'dstPath = "$(CONTENTS_FOLDER_PATH)/Watch"; dstSubfolderSpec = 16; name = "Embed Watch Content";')
 watchproxy=obj('watchproxy','{isa = PBXContainerItemProxy; containerPortal = '+ident('project')+'; proxyType = 1; remoteGlobalIDString = '+watch+'; remoteInfo = PantryWatch;}')
 watchdep=obj('watchdependency','{isa = PBXTargetDependency; target = '+watch+'; targetProxy = '+watchproxy+';}')
+uitestsource=phase('uitestsources','PBXSourcesBuildPhase',uitestbuild)
+uitestframework=phase('uitestframeworks','PBXFrameworksBuildPhase',[])
+uitestproxy=obj('uitestproxy','{isa = PBXContainerItemProxy; containerPortal = '+ident('project')+'; proxyType = 1; remoteGlobalIDString = '+app+'; remoteInfo = Pantry;}')
+uitestdep=obj('uitestdependency','{isa = PBXTargetDependency; target = '+app+'; targetProxy = '+uitestproxy+';}')
 base={'SWIFT_VERSION':'5.0','IPHONEOS_DEPLOYMENT_TARGET':'17.0','SDKROOT':'iphoneos','TARGETED_DEVICE_FAMILY':'1,2','CODE_SIGN_STYLE':'Automatic','CLANG_ENABLE_MODULES':'YES','SWIFT_STRICT_CONCURRENCY':'minimal','MARKETING_VERSION':'0.1.0','CURRENT_PROJECT_VERSION':'1'}
 def configlist(name,extra):
     configs=[]
@@ -69,11 +75,13 @@ appconfig=configlist('app',{'PRODUCT_NAME':'$(TARGET_NAME)','PRODUCT_BUNDLE_IDEN
 widgetconfig=configlist('widget',{'PRODUCT_NAME':'$(TARGET_NAME)','PRODUCT_BUNDLE_IDENTIFIER':'dev.jacksonwilson.pantry.widgets','INFOPLIST_FILE':'Configuration/Widget-Info.plist','CODE_SIGN_ENTITLEMENTS':'Configuration/Pantry.entitlements','APPLICATION_EXTENSION_API_ONLY':'YES','SKIP_INSTALL':'YES','GENERATE_INFOPLIST_FILE':'NO'})
 watchconfig=configlist('watch',{'PRODUCT_NAME':'$(TARGET_NAME)','PRODUCT_BUNDLE_IDENTIFIER':'dev.jacksonwilson.pantry.watchkitapp','INFOPLIST_FILE':'Configuration/Watch-Info.plist','SDKROOT':'watchos','SUPPORTED_PLATFORMS':'watchos watchsimulator','WATCHOS_DEPLOYMENT_TARGET':'10.0','TARGETED_DEVICE_FAMILY':'4','SKIP_INSTALL':'YES','GENERATE_INFOPLIST_FILE':'NO'})
 obj('watch','{isa = PBXNativeTarget; buildConfigurationList = '+watchconfig+'; buildPhases = '+arr([watchsource,watchframework,watchresource])+'; dependencies = (); name = PantryWatch; productName = PantryWatch; productReference = '+watchProduct+'; productType = "com.apple.product-type.application";}')
+uitestconfig=configlist('uitest',{'PRODUCT_NAME':'$(TARGET_NAME)','PRODUCT_BUNDLE_IDENTIFIER':'dev.jacksonwilson.pantry.uitests','GENERATE_INFOPLIST_FILE':'YES','TEST_TARGET_NAME':'Pantry','ENABLE_TESTING_SEARCH_PATHS':'YES'})
+obj('uitests','{isa = PBXNativeTarget; buildConfigurationList = '+uitestconfig+'; buildPhases = '+arr([uitestsource,uitestframework])+'; dependencies = '+arr([uitestdep])+'; name = PantryUITests; productName = PantryUITests; productReference = '+uitestProduct+'; productType = "com.apple.product-type.bundle.ui-testing";}')
 obj('app','{isa = PBXNativeTarget; buildConfigurationList = '+appconfig+'; buildPhases = '+arr([asource,aframework,aresource,embed,watchembed])+'; dependencies = '+arr([dep,watchdep])+'; name = Pantry; productName = Pantry; productReference = '+appProduct+'; productType = "com.apple.product-type.application"; packageProductDependencies = '+arr(packages)+';}')
 obj('widget','{isa = PBXNativeTarget; buildConfigurationList = '+widgetconfig+'; buildPhases = '+arr([wsource,wframework,wresource])+'; dependencies = (); name = PantryWidgets; productName = PantryWidgets; productReference = '+widgetProduct+'; productType = "com.apple.product-type.app-extension";}')
-project=obj('project','{isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = YES; LastUpgradeCheck = 1600;}; buildConfigurationList = '+projectconfig+'; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; knownRegions = (en, Base); mainGroup = '+group+'; productRefGroup = '+products+'; projectDirPath = ""; projectRoot = ""; targets = '+arr([app,widget,watch])+'; packageReferences = '+arr([firebase,google])+';}')
+project=obj('project','{isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = YES; LastUpgradeCheck = 1600;}; buildConfigurationList = '+projectconfig+'; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; knownRegions = (en, Base); mainGroup = '+group+'; productRefGroup = '+products+'; projectDirPath = ""; projectRoot = ""; targets = '+arr([app,widget,watch,uitests])+'; packageReferences = '+arr([firebase,google])+';}')
 path=root/'Pantry.xcodeproj';path.mkdir(exist_ok=True)
 (path/'project.pbxproj').write_text('// !$*UTF8*$!\n{archiveVersion = 1; classes = {}; objectVersion = 56; objects = {\n'+'\n'.join(k+' = '+v+';' for k,v in objects.items())+'\n}; rootObject = '+project+';}\n')
 schemes=path/'xcshareddata'/'xcschemes';schemes.mkdir(parents=True,exist_ok=True)
 (schemes/'Pantry.xcscheme').write_text('''<?xml version="1.0" encoding="UTF-8"?>
-<Scheme LastUpgradeVersion="1600" version="1.3"><BuildAction parallelizeBuildables="YES" buildImplicitDependencies="YES"><BuildActionEntries><BuildActionEntry buildForTesting="YES" buildForRunning="YES" buildForProfiling="YES" buildForArchiving="YES" buildForAnalyzing="YES"><BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="'''+app+'''" BuildableName="Pantry.app" BlueprintName="Pantry" ReferencedContainer="container:Pantry.xcodeproj"/></BuildActionEntry></BuildActionEntries></BuildAction><LaunchAction buildConfiguration="Debug" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.IDEFoundation.Launcher.LLDB" launchStyle="0" useCustomWorkingDirectory="NO" ignoresPersistentStateOnLaunch="NO" debugDocumentVersioning="YES" debugServiceExtension="internal" allowLocationSimulation="YES"><BuildableProductRunnable runnableDebuggingMode="0"><BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="'''+app+'''" BuildableName="Pantry.app" BlueprintName="Pantry" ReferencedContainer="container:Pantry.xcodeproj"/></BuildableProductRunnable></LaunchAction><ArchiveAction buildConfiguration="Release" revealArchiveInOrganizer="YES"/></Scheme>''')
+<Scheme LastUpgradeVersion="1600" version="1.3"><BuildAction parallelizeBuildables="YES" buildImplicitDependencies="YES"><BuildActionEntries><BuildActionEntry buildForTesting="YES" buildForRunning="YES" buildForProfiling="YES" buildForArchiving="YES" buildForAnalyzing="YES"><BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="'''+app+'''" BuildableName="Pantry.app" BlueprintName="Pantry" ReferencedContainer="container:Pantry.xcodeproj"/></BuildActionEntry></BuildActionEntries></BuildAction><TestAction buildConfiguration="Debug" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.IDEFoundation.Launcher.LLDB" shouldUseLaunchSchemeArgsEnv="YES"><Testables><TestableReference skipped="NO"><BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="'''+uitests+'''" BuildableName="PantryUITests.xctest" BlueprintName="PantryUITests" ReferencedContainer="container:Pantry.xcodeproj"/></TestableReference></Testables></TestAction><LaunchAction buildConfiguration="Debug" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.IDEFoundation.Launcher.LLDB" launchStyle="0" useCustomWorkingDirectory="NO" ignoresPersistentStateOnLaunch="NO" debugDocumentVersioning="YES" debugServiceExtension="internal" allowLocationSimulation="YES"><BuildableProductRunnable runnableDebuggingMode="0"><BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="'''+app+'''" BuildableName="Pantry.app" BlueprintName="Pantry" ReferencedContainer="container:Pantry.xcodeproj"/></BuildableProductRunnable></LaunchAction><ArchiveAction buildConfiguration="Release" revealArchiveInOrganizer="YES"/></Scheme>''')

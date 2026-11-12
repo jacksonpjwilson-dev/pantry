@@ -13,7 +13,7 @@ jobs:
   ios:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: macos-15-intel
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/cache/restore@v4
@@ -39,10 +39,15 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild -project native/Pantry.xcodeproj -scheme Pantry -configuration Debug -derivedDataPath native/DerivedData -destination "id=$PANTRY_SIMULATOR" CODE_SIGNING_ALLOWED=NO build 2>&1 | tee native-build.log
+      - name: Test offline inventory interactions
+        run: |
+          set -o pipefail
+          xcodebuild -project native/Pantry.xcodeproj -scheme Pantry -configuration Debug -derivedDataPath native/DerivedData -destination "id=$PANTRY_SIMULATOR" CODE_SIGNING_ALLOWED=NO test 2>&1 | tee native-uitests.log
       - name: Launch native app and capture screenshot
         run: |
           xcrun simctl boot "$PANTRY_SIMULATOR" || true
           xcrun simctl bootstatus "$PANTRY_SIMULATOR" -b
+          xcrun simctl uninstall "$PANTRY_SIMULATOR" dev.jacksonwilson.pantry || true
           xcrun simctl install "$PANTRY_SIMULATOR" native/DerivedData/Build/Products/Debug-iphonesimulator/Pantry.app
           xcrun simctl launch "$PANTRY_SIMULATOR" dev.jacksonwilson.pantry
           sleep 5
@@ -58,6 +63,7 @@ jobs:
           name: native-validation
           path: |
             native-build.log
+            native-uitests.log
             pantry-simulator.png
   firestore-rules:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
