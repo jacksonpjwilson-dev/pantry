@@ -16,7 +16,7 @@ Source reads and multiple destination transactions do not form a distributed tra
 
 ## Proposed future interface — not connected
 
-Read-only investigation found `jacksonpjwilson-dev/logbook-v2`, branch `native-ios-development`. Its native README, MIGRATION.md, LogbookStore and shared models describe local JSON persistence in an App Group, with no Firebase registration, account sync, or published Pantry interface. Native food logs therefore do not currently reach `logbookV2/{uid}`. The branch was inspected without modification. No access to its SwiftData store is assumed. The owner must authorize a published read interface. Proposed envelope:
+Read-only investigation found `jacksonpjwilson-dev/logbook-v2`, branch `native-ios-development`. Its native README, MIGRATION.md, LogbookStore and shared models describe local JSON persistence in an App Group, with no Firebase registration, account sync, or published Pantry interface. Native food logs therefore do not currently reach `logbookV2/{uid}`. The branch was inspected without modification at `9f7017b2bbe9c1bed04c9f3af9a7ad95623ea910`. `FoodLog` already has a UUID `id`, `foodID`, `date`, `quantity`, `unit` and `confirmedAt`; it has no published account mapping, revision stream or retained tombstones. The repository writes schema-v1 `logbook-state-v1.json` atomically in its own App Group/private fallback. Pantry does not access that private file. An authorized future publisher can retain those UUIDs as source entry IDs, but must supply the missing lifecycle and ownership contract. No access to its SwiftData store is assumed. The owner must authorize a published read interface. Proposed envelope:
 
 ```
 accountSubject: authenticated owner mapping (never email-based guessing)

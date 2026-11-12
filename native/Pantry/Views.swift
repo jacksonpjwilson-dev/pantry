@@ -65,6 +65,7 @@ struct Dashboard: View {
             }.padding()
         }.background(Color(.systemGroupedBackground)).navigationTitle("Pantry")
         .refreshable { await store.syncLogbook() }
+        .navigationDestination(isPresented: Binding(get: { store.requestedPage != nil }, set: { if !$0 { store.requestedPage = nil } })) { HistoryView(reason: store.requestedPage == "recent" ? "eaten" : nil) }
         .toolbar { Button("Customize", systemImage: "slider.horizontal.3") { customize = true } }
         .sheet(isPresented: $customize) { NavigationStack { List { ForEach(cards, id: \.self) { Text($0) }.onMove { source, destination in var array = cards; array.move(fromOffsets: source, toOffset: destination); order = array.joined(separator: ",") } }.environment(\.editMode, .constant(.active)).navigationTitle("Dashboard order").toolbar { Button("Done") { customize = false } } } }
     }
@@ -371,6 +372,11 @@ struct ShoppingEditor: View {
         NavigationStack { Form {
             TextField("Name", text: $row.name)
             TextField("Quantity needed", text: $amount).keyboardType(.decimalPad)
+            Picker("Optional inventory item", selection: Binding(get: { row.itemId ?? "" }, set: { row.itemId = $0.isEmpty ? nil : $0 })) {
+                Text("Shopping only").tag("")
+                ForEach(store.state.items) { Text("\($0.name) (\($0.unit))").tag($0.id) }
+            }
+            Text("Linked purchases add the entered quantity in that item's inventory unit, after confirmation.").font(.caption)
             TextField("Category", text: $row.category)
             TextField("List name", text: $row.list)
             Picker("Priority", selection: $row.priority) { Text("Normal").tag(0); Text("Soon").tag(1); Text("High").tag(2) }

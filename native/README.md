@@ -1,6 +1,6 @@
 # Pantry for iOS
 
-Native SwiftUI iOS 17+ application alongside the unchanged production website. Open `Pantry.xcodeproj`; shared scheme **Pantry** builds the phone app, WidgetKit extension and watchOS 10 companion. Pure Decimal calculations are also a Swift package (`swift test`). Project files are deterministic and can be regenerated with `python3 scripts/generate-project.py` after adding source files.
+Native SwiftUI iOS 17+ application alongside the existing production website (no deployment performed). Open `Pantry.xcodeproj`; shared scheme **Pantry** builds the phone app, WidgetKit extension and watchOS 10 companion. Pure Decimal calculations are also a Swift package (`swift test`). Project files are deterministic and can be regenerated with `python3 scripts/generate-project.py` after adding source files.
 
 ## Configure on a Mac
 
@@ -18,7 +18,7 @@ Firebase and GoogleSignIn use Swift Package Manager. No paid dependency or Cloud
 * Inventory list/search/category/sort, item metadata, add/edit/delete, bought/used/discarded adjustments, low-stock suggestions, applied history/undo and per-item Charts use actual stored data.
 * Quantity edits go through ledger operations; metadata editing cannot overwrite concurrent quantity changes. Units are immutable after item creation to protect existing ledger interpretation.
 * SwiftData stores account-separated snapshots and durable manual adjustment/item-edit/shopping outboxes. Firestore is authoritative when signed in. Transactions require network; queued changes are replayed with stable IDs and displayed as pending. Device-only changes apply immediately. Deletion/undo require network in cloud mode. Pending cloud changes must resolve before sign-out.
-* Native item fields are additive and merge-written. The existing website's item save still replaces a whole document; editing the same enriched item in an older web client may drop native-only fields. Coordinate a separate web merge-write update before production rollout. No such change is silently deployed here.
+* Native item fields are additive and merge-written. This branch also fixes web metadata saves to merge edited fields and exclude cached quantity for existing items. A synthetic test verifies a concurrent native deduction and native-only fields survive. Already-open older web clients need to reload the updated code after deployment. No production website deployment is performed here.
 * Full server history is loaded before Logbook planning. Shared JavaScriptCore engine preserves production synthetic IDs and conversion factors; additional native guards reject ambiguous reappearances, invalid amounts and unverified serving conversion. See the audit and adapter contract in `../docs/`.
 * Links/ignore/inbox use existing meta documents. New shopping rows live under individual fields of `meta/nativeShopping`, one JSON string per stable shopping ID. Unrelated shopping rows merge independently; simultaneous edits to the same row are last-writer-wins. Explicit purchase IDs prevent double inventory additions. This is a new additive metadata document, not a migration of existing inventory.
 * Device inventory stays separate when signing in. Settings can preview a complete browser/native JSON backup and import it only into an empty device-only pantry. A separate confirmed device-to-cloud migration requires an empty cloud pantry or a matching interrupted migration, imports ledger history first, preserves identifiers, rejects conflicting records and keeps the local source. It does not directly access browser localStorage. Export the complete `pantry:local` JSON object from the browser; the nightly export summary lacks restorable IDs/history. Do not erase a source snapshot to resolve a cloud error.
@@ -32,7 +32,7 @@ Firebase and GoogleSignIn use Swift Package Manager. No paid dependency or Cloud
 
 `cd emulator && npm ci && npm test`: isolated `demo-pantry-native` Firestore tests for authentication boundaries, forbidden Logbook/unrelated writes, concurrent idempotent application, historical replay prevention and ledger retention. They test the proposed rules and transaction invariants, not a live Firebase account or the Swift Firebase SDK end to end.
 
-Existing `node ../ci/smoke.mjs` must run from the repository root as `node ci/smoke.mjs`. The website's smoke test is unchanged. CI has separate macOS Swift/Xcode and Linux emulator jobs. All fixtures are synthetic; never point these tests at production.
+Run `node ci/smoke.mjs` and `node --test ci/store-compat.test.mjs` from the repository root. The original smoke test is unchanged; the new regression test covers the web/native metadata boundary. CI has separate macOS Swift/Xcode and Linux emulator jobs. Native UI tests create synthetic local stock, purchase/consume/undo it and verify persistence after relaunch; `--ui-testing` disables Firebase regardless of any bundled configuration. All fixtures are synthetic; never point these tests at production.
 
 ## Release gates / remaining work
 

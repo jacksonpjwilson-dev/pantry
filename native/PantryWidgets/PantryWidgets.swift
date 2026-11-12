@@ -27,6 +27,18 @@ struct Overview: View {
     var count: Int { kind == "shopping" ? entry.shopping : kind == "expiry" ? entry.expiry : kind == "inbox" ? entry.inbox : kind == "recent" ? entry.detail?.recentlyEaten.count ?? 0 : entry.low }
     var title: String { kind == "shopping" ? "To buy" : kind == "expiry" ? "Dates soon" : kind == "inbox" ? "To link" : kind == "recent" ? "Recently eaten" : "Low stock" }
     var icon: String { kind == "shopping" ? "cart" : kind == "expiry" ? "calendar" : kind == "inbox" ? "link" : "leaf" }
+    var destination: URL? {
+        let path: String
+        switch kind {
+        case "shopping": path = "shopping"
+        case "inbox": path = "inbox"
+        case "expiry": path = "inventory?filter=expiry"
+        case "recent": path = "home?view=recent"
+        case "sync": path = "settings"
+        default: path = "inventory?filter=low"
+        }
+        return URL(string: "pantry://" + path)
+    }
     var body: some View {
         Group {
             if kind == "sync" {
@@ -55,7 +67,7 @@ struct Overview: View {
                     else { Text("Open Pantry to update").font(.caption) }
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
-        }.containerBackground(.fill.tertiary, for: .widget).widgetURL(URL(string: "pantry://\(kind == "shopping" ? "shopping" : kind == "inbox" ? "inbox" : "inventory")"))
+        }.containerBackground(.fill.tertiary, for: .widget).widgetURL(destination)
     }
 }
 struct CountWidget: Widget {

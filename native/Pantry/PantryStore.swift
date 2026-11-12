@@ -37,6 +37,7 @@ struct DeviceState: Codable {
     @Published var route = "home"
     @Published var intentRequest: IntentRequest?
     @Published var requestedFilter = "all"
+    @Published var requestedPage: String?
     @Published var scanRequested = false
     struct IntentRequest: Identifiable { var id = UUID(); var kind: String; var name: String; var quantity: Decimal }
     func open(_ url: URL) {
@@ -47,6 +48,7 @@ struct DeviceState: Codable {
             intentRequest = IntentRequest(kind: kind, name: name, quantity: quantity)
         } else if let host = url.host, ["home", "inventory", "shopping", "inbox", "settings"].contains(host) {
             requestedFilter = ["low", "expiry"].contains(value("filter") ?? "") ? value("filter")! : "all"
+            requestedPage = ["recent", "history"].contains(value("view") ?? "") ? value("view") : nil
             scanRequested = value("scan") == "true"; route = host
         }
     }
@@ -126,8 +128,10 @@ struct DeviceState: Codable {
         state.ledgerData = try JSONSerialization.data(withJSONObject: history)
         state.metaData = try JSONSerialization.data(withJSONObject: meta)
         let data = try JSONEncoder().encode(state)
-        if let saved = try snapshot() { saved.payload = data } else { context.insert(LocalSnapshot(account: account, payload: data)) }
-        try context.save()
+        do {
+            if let saved = try snapshot() { saved.payload = data } else { context.insert(LocalSnapshot(account: account, payload: data)) }
+            try context.save()
+        } catch { context.rollback(); throw error }
         publishWidget()
         WatchBridge.shared.publish(state: state)
         if UserDefaults.standard.bool(forKey: "remindersEnabled") {
@@ -236,17 +240,21 @@ struct DeviceState: Codable {
         guard !busy else { throw InventoryErrorBridge.message("Wait for synchronization to finish") }
         guard !op.delta.isNaN, state.items.contains(where: { $0.id == op.itemId }) else { throw InventoryError.invalidQuantity }
         if user != nil {
-            if !state.queue.contains(where: { $0.id == op.id }) { state.queue.append(op); try persist() }
+            if !state.queue.contains(where: { $0.id == op.id }) {
+                let previous = state
+                do { state.queue.append(op); try persist() } catch { state = previous; throw error }
+            }
             await refresh() // Offline operations remain queued and survive termination.
         } else { try localAdjust(op, source: nil, note: "") }
     }
     private func localAdjust(_ op: Adjustment, source: [String: Any]?, note: String) throws {
         guard !history.contains(where: { $0["id"] as? String == op.id }) else { return }
         guard let i = state.items.firstIndex(where: { $0.id == op.itemId }) else { throw InventoryError.missingItem }
+        let previous = state, previousHistory = history
         let before = state.items[i].qty, result = try op.apply(to: before)
         let it = state.items[i]; state.items[i].qty = result.after; state.items[i].updatedAt = Date().timeIntervalSince1970 * 1000
         history.append(entry(op, itemName: it.name, unit: it.unit, before: before, after: result.after, source: source, note: note))
-        try persist()
+        do { try persist() } catch { state = previous; history = previousHistory; throw error }
     }
     private func entry(_ op: Adjustment, itemName: String, unit: String, before: Decimal, after: Decimal, source: [String: Any]?, note: String) -> [String: Any] {
         ["id": op.id, "itemId": op.itemId, "itemName": itemName, "unit": unit, "delta": NSDecimalNumber(decimal: after - before), "requestedDelta": NSDecimalNumber(decimal: op.delta), "unfulfilled": NSDecimalNumber(decimal: op.delta - (after - before)), "qtyBefore": NSDecimalNumber(decimal: before), "qtyAfter": NSDecimalNumber(decimal: after), "reason": op.reason, "source": source as Any? ?? NSNull(), "note": note, "ts": Date().timeIntervalSince1970 * 1000, "undone": false]
@@ -397,7 +405,7 @@ struct DeviceState: Codable {
         guard let token = result.user.idToken?.tokenString else { throw InventoryErrorBridge.message("Missing Google identity token") }
         _ = try await Auth.auth().signIn(with: GoogleAuthProvider.credential(withIDToken: token, accessToken: result.user.accessToken.tokenString))
     }
-    func signOut() throws { guard !busy, activeOperations == 0, state.queue.isEmpty, (state.mutations ?? []).isEmpty, (state.pendingShopping ?? []).isEmpty else { throw InventoryErrorBridge.message("Resolve queued operations before signing out") }; try Auth.auth().signOut() }
+    func signOut() throws { guard !busy, activeOperations == 0, state.queue.isEmpty, (state.mutations ?? []).isEmpty, (state.pendingShopping ?? []).isEmpty else { throw InventoryErrorBridge.message("Resolve queued operations before signing out") }; try Auth.auth().signOut(); GIDSignIn.sharedInstance.signOut() }
     struct CloudMigrationPreview: Identifiable {
         var id = UUID(); var source: DeviceState; var digest: String
         var history: [[String: Any]]; var metadata: [String: [String: Any]]
