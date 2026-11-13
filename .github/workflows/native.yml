@@ -42,11 +42,12 @@ jobs:
           set -o pipefail
           xcodebuild -project native/Pantry.xcodeproj -scheme Pantry -configuration Debug -derivedDataPath native/DerivedData -destination "id=$PANTRY_SIMULATOR" CODE_SIGNING_ALLOWED=NO build 2>&1 | tee native-build.log
       - name: Prepare simulator for UI testing
-        timeout-minutes: 5
+        timeout-minutes: 10
         run: |
+          set -o pipefail
+          open -a Simulator --args -CurrentDeviceUDID "$PANTRY_SIMULATOR"
           xcrun simctl boot "$PANTRY_SIMULATOR" || true
-          xcrun simctl bootstatus "$PANTRY_SIMULATOR" -b
-          xcrun simctl status_bar "$PANTRY_SIMULATOR" override --time '9:41'
+          xcrun simctl bootstatus "$PANTRY_SIMULATOR" -b 2>&1 | tee simulator-boot.log
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -62,11 +63,8 @@ jobs:
           npx firebase emulators:exec --project demo-pantry-native --only auth,firestore 'node seed-ui.mjs && bash ../scripts/run-ui-tests.sh'
       - name: UI failure diagnostics
         if: failure()
-        run: |
-          xcrun simctl list devices > simulator-devices.log
-          xcrun simctl io "$PANTRY_SIMULATOR" screenshot simulator-failure.png || true
-          xcrun simctl spawn "$PANTRY_SIMULATOR" log show --last 5m --style compact --predicate 'process == "SpringBoard" OR process == "Pantry" OR process == "PantryUITests-Runner"' > simulator-ui.log 2>&1 || true
-          xcrun xcresulttool get test-results summary --path native/TestResults/PantryUITests.xcresult > ui-summary.json 2>&1 || true
+        timeout-minutes: 3
+        run: python3 native/scripts/simulator-diagnostics.py
       - name: Launch native app and capture screenshot
         run: |
           xcrun simctl boot "$PANTRY_SIMULATOR" || true
@@ -90,6 +88,8 @@ jobs:
             native-uitests.log
             native/TestResults/PantryUITests.xcresult
             pantry-simulator.png
+            simulator-boot.log
+            simulator-capture.log
             simulator-devices.log
             simulator-failure.png
             simulator-ui.log

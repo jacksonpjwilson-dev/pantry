@@ -5,6 +5,7 @@ import AVFoundation
 struct BarcodeScanner: View {
     var onResult: (String) -> Void
     @Environment(\.dismiss) var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     @State private var manual = ""
     @State private var authorization = AVCaptureDevice.authorizationStatus(for: .video)
     @State private var cameraError: String?
@@ -23,6 +24,8 @@ struct BarcodeScanner: View {
                 Button("Use barcode") { onResult(manual) }.disabled(manual.isEmpty || !manual.allSatisfy(\.isNumber))
                 Text("Unknown barcodes open a blank item. Product details are never guessed.").font(.caption).foregroundStyle(.secondary)
             }.padding().navigationTitle("Scan a product").toolbar { Button("Cancel") { dismiss() } }
+        }.onChange(of: scenePhase) { _, phase in
+            if phase == .active { authorization = AVCaptureDevice.authorizationStatus(for: .video) }
         }.task {
             if authorization == .notDetermined && DataScannerViewController.isSupported {
                 _ = await AVCaptureDevice.requestAccess(for: .video)
