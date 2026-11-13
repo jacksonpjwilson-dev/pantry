@@ -16,7 +16,7 @@ struct Provider: TimelineProvider {
     func getSnapshot(in context: Context, completion: @escaping (Snapshot) -> Void) { completion(read()) }
     func getTimeline(in context: Context, completion: @escaping (Timeline<Snapshot>) -> Void) { completion(Timeline(entries: [read()], policy: .after(Date().addingTimeInterval(1800)))) }
     func read() -> Snapshot {
-        let defaults = UserDefaults(suiteName: "group.dev.jacksonwilson.pantry")
+        let defaults = WidgetStorage.defaults
         return Snapshot(date: Date(), low: defaults?.integer(forKey: "low") ?? 0, shopping: defaults?.integer(forKey: "shopping") ?? 0, expiry: defaults?.integer(forKey: "expiry") ?? 0, inbox: defaults?.integer(forKey: "inbox") ?? 0, updated: defaults?.object(forKey: "updated") as? Date, detail: WidgetStorage.snapshot())
     }
 }

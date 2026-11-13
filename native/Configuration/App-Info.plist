@@ -28,6 +28,14 @@
 				<string>pantry</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>Google Sign-in</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>$(PANTRY_GOOGLE_URL_SCHEME)</string>
+			</array>
+		</dict>
 	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
@@ -37,6 +45,8 @@
 	<string>Scan a product barcode to find or add pantry food.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
+	<key>PantryAppGroup</key>
+	<string>$(PANTRY_APP_GROUP)</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>

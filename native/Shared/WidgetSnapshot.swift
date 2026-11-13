@@ -18,7 +18,7 @@ struct WidgetPurchaseCommand: Codable {
     var accountTag: String
 }
 enum WidgetStorage {
-    static let group = "group.dev.jacksonwilson.pantry"
+    static let group = Bundle.main.object(forInfoDictionaryKey: "PantryAppGroup") as? String ?? "group.dev.jacksonwilson.pantry"
     static var defaults: UserDefaults? { UserDefaults(suiteName: group) }
     static func snapshot() -> WidgetSnapshot? { guard let data = defaults?.data(forKey: "snapshot") else { return nil }; return try? JSONDecoder().decode(WidgetSnapshot.self, from: data) }
     static func directory() throws -> URL {

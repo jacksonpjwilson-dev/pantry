@@ -23,6 +23,6 @@
 	<key>WKApplication</key>
 	<true/>
 	<key>WKCompanionAppBundleIdentifier</key>
-	<string>dev.jacksonwilson.pantry</string>
+	<string>$(PANTRY_BUNDLE_ID)</string>
 </dict>
 </plist>

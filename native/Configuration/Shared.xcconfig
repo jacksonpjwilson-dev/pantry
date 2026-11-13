@@ -1,0 +1,5 @@
+// Repository defaults. Personal values belong in Local.xcconfig (gitignored).
+PANTRY_BUNDLE_ID = dev.jacksonwilson.pantry
+PANTRY_APP_GROUP = group.dev.jacksonwilson.pantry
+PANTRY_GOOGLE_URL_SCHEME = pantry-google-unconfigured
+#include? "Local.xcconfig"

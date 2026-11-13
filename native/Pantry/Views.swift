@@ -106,6 +106,7 @@ struct InventoryView: View {
     @State var scanner = false
     @State var barcode = ""
     @State var scannedID: String?
+    @State private var pendingBarcode: String?
     @State var filter = "all"
     var items: [InventoryItem] {
         store.state.items.filter { item in
@@ -126,11 +127,11 @@ struct InventoryView: View {
         .onChange(of: store.requestedFilter) { _, value in filter = value }
         .onChange(of: store.scanRequested) { _, value in if value { scanner = true; store.scanRequested = false } }
         .sheet(isPresented: $add) { ItemEditor(item: InventoryItem(name: ""), initialBarcode: barcode) }
-        .sheet(isPresented: $scanner) { BarcodeScanner { code in
-            scanner = false
+        .sheet(isPresented: $scanner, onDismiss: {
+            guard let code = pendingBarcode else { return }; pendingBarcode = nil
             if let found = store.state.items.first(where: { BarcodeIdentity.matches($0.barcode, code) }) { scannedID = found.id }
             else { barcode = code; add = true }
-        } }
+        }) { BarcodeScanner { code in pendingBarcode = code; scanner = false } }
         .navigationDestination(isPresented: Binding(get: { scannedID != nil }, set: { if !$0 { scannedID = nil } })) { if let id = scannedID { ItemDetail(id: id) } }
     }
 }
@@ -312,7 +313,7 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section("Account") {
-                if let user = store.user { Text(user.email ?? "Signed in"); Button("Sign out") { Task { await store.perform { try store.signOut() } } } }
+                if let user = store.user { Text(user.email ?? "Signed in"); Button("Sign out") { Task { await store.perform { try store.signOut() } } }.disabled(store.busy || store.authenticating) }
                 else {
                     Text("Device-only inventory stays separate when you sign in. No automatic migration or cloud replacement occurs.").font(.caption)
                     TextField("Email", text: $email).textContentType(.emailAddress).textInputAutocapitalization(.never)
@@ -321,7 +322,7 @@ struct SettingsView: View {
                     Button("Sign in with Google") { Task { await store.perform { try await store.google() } } }.disabled(!store.configured || !store.authenticationReady || store.busy || store.authenticating)
                     Button("Send password reset") { Task { await store.perform { guard store.configured else { return }; try await Auth.auth().sendPasswordReset(withEmail: email) } } }.disabled(!store.configured || !store.authenticationReady || store.busy || store.authenticating)
                 }
-                if !store.configured { Text("Cloud not configured: add the registered iOS Firebase plist. Device-only mode works without it.").font(.caption) }
+                if !store.configured { Text(FirebaseSetup.issue ?? "Cloud is disabled for automated UI tests. Device-only mode works without it.").font(.caption) }
             }
             Section("Synchronization") {
                 Toggle("Logbook v2 consumption sync", isOn: Binding(get: { store.logbookEnabled }, set: { enabled in Task { await store.perform { try await store.setLogbookEnabled(enabled) } } })).disabled(store.busy)

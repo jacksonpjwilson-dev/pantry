@@ -6,7 +6,7 @@ import GoogleSignIn
 @main struct PantryApp: App {
     @StateObject private var store = PantryStore()
     init() {
-        if !ProcessInfo.processInfo.arguments.contains("--ui-testing"), let file = Bundle.main.path(forResource: "GoogleService-Info", ofType: "plist"), let options = FirebaseOptions(contentsOfFile: file), options.projectID == "logbook-e784a" { FirebaseApp.configure(options: options) }
+        FirebaseSetup.configure()
     }
     var body: some Scene {
         WindowGroup { RootView().environmentObject(store).onOpenURL { url in

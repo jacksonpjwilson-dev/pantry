@@ -20,3 +20,6 @@ native/emulator/*-debug.log
 native/emulator/.firebase/
 
 native/TestResults/
+
+native/Configuration/Local.xcconfig
+**/__pycache__/

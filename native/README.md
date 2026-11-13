@@ -2,14 +2,14 @@
 
 Native SwiftUI iOS 17+ application alongside the existing production website (no deployment performed). Open `Pantry.xcodeproj`; shared scheme **Pantry** builds the phone app, WidgetKit extension and watchOS 10 companion. Pure Decimal calculations are also a Swift package (`swift test`). Project files are deterministic and can be regenerated with `python3 scripts/generate-project.py` after adding source files.
 
+See [Install on iPhone](INSTALL-ON-IPHONE.md) for the complete signing/Firebase/device workflow and [Device readiness](DEVICE-READINESS.md) for coverage versus unverified runtime behavior. Personal settings live in gitignored `Configuration/Local.xcconfig`; `scripts/configure-ios.py` validates and prepares all targets together.
+
 ## Configure on a Mac
 
-1. Select your Apple development team on all three targets. Register the bundle IDs `dev.jacksonwilson.pantry`, `.widgets`, and `.watchkitapp` (or consistently replace them).
-2. Enable the shared App Group `group.dev.jacksonwilson.pantry` for phone/widget. Replace the identifier everywhere if your team uses another group.
-3. Register an **iOS** app for that phone bundle ID in the existing Firebase project **logbook-e784a**. Download its `GoogleService-Info.plist` into `native/Pantry/`. Do not reuse the web app ID. Regenerate the project to include the local plist; it is gitignored. Never put service-account keys in the app.
-4. Add the plist's `REVERSED_CLIENT_ID` as another URL scheme in `Configuration/App-Info.plist` for Google sign-in. Preserve the `pantry` deep-link scheme. Enable the intended Firebase authentication providers in the existing project. A missing plist leaves the app in fully local device mode.
-5. Review existing production rules. `emulator/firestore.rules` is an **isolated test candidate**, not a complete replacement for Logbook's deployed rules. Preserve existing authorized Logbook writes in its own app. No rules are deployed by this project.
-6. Build for an iPhone simulator: `xcodebuild -project Pantry.xcodeproj -scheme Pantry -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build`. Use a provisioned device for camera, Google sign-in, Watch pairing and Live Activity validation.
+1. Run `python3 native/scripts/configure-ios.py --team YOURTEAMID` from the repository root. Add `--firebase-plist /path/to/GoogleService-Info.plist` for the registered iOS client in existing project `logbook-e784a`. Optional `--bundle-id` and `--app-group` customize all related identifiers together. The script sets the Google URL scheme and regenerates the project; no manual source edits are required.
+2. Open `native/Pantry.xcodeproj`, choose **Pantry**, select your iPhone and verify automatic signing/team and App Group provisioning for phone/widget. Choose **PantryWatch** for a paired Watch. See the installation guide for Apple/Firebase Console steps and capability restrictions.
+3. Simulator build: `xcodebuild -project native/Pantry.xcodeproj -scheme Pantry -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build`. Device signing and runtime checks require the owner's Mac/accounts/devices.
+4. Production rules and data are unchanged. `emulator/firestore.rules` remains an isolated test candidate, not a replacement for Logbook's deployed rules.
 
 Firebase and GoogleSignIn use Swift Package Manager. No paid dependency or CloudKit source of truth is added. Device-only mode does not need Firebase configuration. Simulator camera hardware may be unavailable; manual barcode entry remains available.
 
@@ -30,14 +30,14 @@ Firebase and GoogleSignIn use Swift Package Manager. No paid dependency or Cloud
 
 `swift test`: Decimal conversions, clamping/applied undo, low stock, expiry, purchase identity, legacy UTF-16 hashing and (on Apple platforms) JavaScriptCore reconciliation fixtures: duplicate replay, correction, deleted days, identical occurrences/reorder, ambiguous reappearance, missing metadata and invalid quantities.
 
-`cd emulator && npm ci && npm test`: isolated `demo-pantry-native` Firestore tests for authentication boundaries, forbidden Logbook/unrelated writes, concurrent idempotent application, historical replay prevention and ledger retention. They test the proposed rules and transaction invariants, not a live Firebase account or the Swift Firebase SDK end to end.
+`cd emulator && npm ci && npm test`: isolated `demo-pantry-native` Firestore tests for authentication boundaries, forbidden Logbook/unrelated writes, concurrent idempotent application, historical replay prevention and ledger retention. They test the proposed rules and transaction invariants, not a live Firebase account. The macOS UI job separately runs the Swift Firebase SDK against isolated Auth/Firestore emulators; see the readiness record.
 
 Run `node ci/smoke.mjs` and `node --test ci/store-compat.test.mjs` from the repository root. The original smoke test is unchanged; the new regression test covers the web/native metadata boundary. CI has separate macOS Swift/Xcode and Linux emulator jobs. Native UI tests create synthetic local stock, purchase/consume/undo it and verify persistence after relaunch; `--ui-testing` disables Firebase regardless of any bundled configuration. All fixtures are synthetic; never point these tests at production.
 
 ## Release gates / remaining work
 
 * Confirm Xcode builds and simulator launch on the final branch, then test Firebase native registration, Google redirect, deployed security rules and account restoration with an authorized test user.
-* Run native SDK multi-device/offline/concurrent source-edit scenarios against a dedicated emulator configuration. The current emulator suite does not exercise the Swift repository end to end.
+* Run native SDK multi-device/offline/concurrent source-edit scenarios against a dedicated emulator configuration. The added native emulator UI scenario covers sign-in, stock and account switching; airplane-mode/restart/reconnect and multi-device conflict scenarios still require runtime testing.
 * Test Watch pairing/delivery, camera denial, WidgetKit timelines, interactive widgets, Dynamic Island, VoiceOver and large Dynamic Type on devices.
 * Validate the reviewed browser/device import workflow with owner-provided backups; add account deletion with a retained-record policy and conflict review UI for legacy remove/re-add cases. Current behavior stops safely with an actionable message.
 * Watch complications, optional product database lookup, full theme typography and push-based background health alerts remain follow-up work. Expiry reminders offer three/seven day lead times; local reminders refresh after inventory changes when enabled.

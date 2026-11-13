@@ -618,7 +618,7 @@ struct DeviceState: Codable {
             recentlyEaten: recent.map { .init(id: $0["id"] as? String ?? UUID().uuidString, title: $0["itemName"] as? String ?? "Food", detail: String(describing: $0["delta"] ?? "")) },
             inboxCount: inbox.count, updated: Date(), syncStatus: status, lastSuccessfulSync: lastSync)
         if let data = try? JSONEncoder().encode(snapshot) { WidgetStorage.defaults?.set(data, forKey: "snapshot") }
-        guard let defaults = UserDefaults(suiteName: "group.dev.jacksonwilson.pantry") else { return }
+        guard let defaults = WidgetStorage.defaults else { return }
         defaults.set(low.count, forKey: "low"); defaults.set(expiring.count, forKey: "expiry"); defaults.set(inbox.count, forKey: "inbox")
         defaults.set(state.shopping.filter { !$0.purchased }.count, forKey: "shopping"); defaults.set(Date(), forKey: "updated")
         WidgetCenter.shared.reloadAllTimelines()
