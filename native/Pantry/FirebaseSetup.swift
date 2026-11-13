@@ -11,7 +11,7 @@ enum FirebaseSetup {
     static func configure() {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--ui-testing"), ProcessInfo.processInfo.arguments.contains("--firebase-emulator") {
-            let options = FirebaseOptions(googleAppID: "1:123456789:ios:syntheticpantry", gcmSenderID: "123456789")
+            let options = FirebaseOptions(googleAppID: "1:123456789:ios:0123456789abcdef", gcmSenderID: "123456789")
             options.apiKey = "synthetic-emulator-key"; options.projectID = "demo-pantry-native"
             FirebaseApp.configure(options: options)
             Auth.auth().useEmulator(withHost: "127.0.0.1", port: 9099)
