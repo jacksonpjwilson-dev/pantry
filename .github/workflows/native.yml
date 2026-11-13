@@ -13,7 +13,7 @@ jobs:
   ios:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: macos-15-intel
-    timeout-minutes: 45
+    timeout-minutes: 65
     steps:
       - uses: actions/checkout@v4
       - uses: actions/cache/restore@v4
@@ -56,13 +56,15 @@ jobs:
           distribution: temurin
           java-version: '21'
       - name: Install emulator test dependencies
+        timeout-minutes: 10
         run: npm ci --prefix native/emulator --no-audit --no-fund
       - name: Test inventory, scanning and Firebase account interactions
+        timeout-minutes: 24
         run: |
           cd native/emulator
           npx firebase emulators:exec --project demo-pantry-native --only auth,firestore 'node seed-ui.mjs && bash ../scripts/run-ui-tests.sh'
       - name: UI failure diagnostics
-        if: failure()
+        if: failure() || cancelled()
         timeout-minutes: 3
         run: python3 native/scripts/simulator-diagnostics.py
       - name: Launch native app and capture screenshot
@@ -74,12 +76,8 @@ jobs:
           xcrun simctl launch "$PANTRY_SIMULATOR" dev.jacksonwilson.pantry
           sleep 5
           xcrun simctl io "$PANTRY_SIMULATOR" screenshot pantry-simulator.png
-      - uses: actions/cache/save@v4
-        if: always() && steps.xcode-cache.outputs.cache-hit != 'true'
-        with:
-          path: native/DerivedData
-          key: pantry-xcode-intel-${{ github.sha }}
       - uses: actions/upload-artifact@v4
+        timeout-minutes: 5
         if: always()
         with:
           name: native-validation
@@ -94,6 +92,13 @@ jobs:
             simulator-failure.png
             simulator-ui.log
             ui-summary.json
+      - uses: actions/cache/save@v4
+        if: success() && steps.xcode-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 5
+        continue-on-error: true
+        with:
+          path: native/DerivedData
+          key: pantry-xcode-intel-${{ github.sha }}
   firestore-rules:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
