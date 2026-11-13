@@ -49,6 +49,12 @@ final class InventoryTests: XCTestCase {
         XCTAssertFalse(LogbookConnectionPolicy.enabled(in: ["state":["setup":["linkV2":false]]]))
         XCTAssertTrue(LogbookConnectionPolicy.enabled(in: ["state":["setup":["linkV2":true, "cats":["Fridge"]]]]))
     }
+    func testHistoricalReversalConvertsCompatibleUnitsAndRejectsDensityGuesses() throws {
+        XCTAssertEqual(try Measures.reversal(of: -150, recordedUnit: "g", currentUnit: "kg"), Decimal(string: "0.15"))
+        XCTAssertEqual(try Measures.reversal(of: 2, recordedUnit: "kg", currentUnit: "g"), -2000)
+        XCTAssertThrowsError(try Measures.reversal(of: -1, recordedUnit: "g", currentUnit: "ml"))
+        XCTAssertThrowsError(try Measures.reversal(of: -1, recordedUnit: "count", currentUnit: "g"))
+    }
     func testInvalidArithmeticIsRejected() {
         XCTAssertThrowsError(try Adjustment(itemId: "rice", delta: .nan, reason: "manual").apply(to: 1))
         XCTAssertThrowsError(try Adjustment(itemId: "rice", delta: 1, reason: "manual").apply(to: -1))

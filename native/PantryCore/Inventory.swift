@@ -36,6 +36,12 @@ public enum Measures {
         guard !converted.isNaN else { throw InventoryError.invalidQuantity }
         return converted
     }
+    public static func reversal(of appliedDelta: Decimal, recordedUnit: String, currentUnit: String) throws -> Decimal {
+        guard !appliedDelta.isNaN else { throw InventoryError.invalidQuantity }
+        let amount = appliedDelta < 0 ? -appliedDelta : appliedDelta
+        let converted = try convert(amount, from: recordedUnit, to: currentUnit)
+        return appliedDelta < 0 ? converted : -converted
+    }
     public static func rounded(_ amount: Decimal) -> Decimal { var input = amount; var output = Decimal(); NSDecimalRound(&output, &input, 3, .plain); return output }
 }
 public struct InventoryItem: Codable, Identifiable, Equatable {

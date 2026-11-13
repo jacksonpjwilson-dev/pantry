@@ -4,7 +4,7 @@ import FirebaseAuth
 import Charts
 import UniformTypeIdentifiers
 
-private func number(_ value: Decimal) -> String { NSDecimalNumber(decimal: value).stringValue }
+private func number(_ value: Decimal) -> String { QuantityInput.formatted(value) }
 private func recordedQuantity(_ source: [String: Any]) -> String {
     if let amount = source["amt"], !(amount is NSNull) { return "\(amount) \(source["unit"] as? String ?? "recorded units")" }
     return "\(source["q"] ?? 1) servings"
@@ -25,6 +25,7 @@ struct RootView: View {
             NavigationStack { InboxView() }.tabItem { Label("Links", systemImage: "link") }.tag("inbox")
             NavigationStack { SettingsView() }.tabItem { Label("Settings", systemImage: "gearshape") }.tag("settings")
         }
+        .id(store.notificationScope)
         .safeAreaInset(edge: .top) { if !store.cacheWritable { Text("Local cache needs recovery. Existing storage is preserved.").font(.caption).padding().frame(maxWidth: .infinity).background(.orange.opacity(0.2)) } }
         .tint(colors[max(0, min(theme, colors.count - 1))])
         .preferredColorScheme(appearance == "auto" ? nil : appearance == "dark" ? .dark : .light)
@@ -33,7 +34,7 @@ struct RootView: View {
                 Text("Account: \(store.user?.email ?? "This device only")")
                 Text("\(request.name) · \(number(request.quantity))")
                 Text(request.kind == "inventory" ? "Adds quantity in the food's existing inventory unit." : request.kind == "purchase" ? "Marks the shopping item complete without adding inventory." : "Adds a shopping item.")
-                Button("Confirm") { Task { await store.perform { try await store.confirmIntent(request); store.intentRequest = nil } } }.disabled(!store.authenticationReady || store.busy)
+                Button("Confirm") { Task { await store.perform { try await store.confirmIntent(request); store.intentRequest = nil } } }.disabled(!store.authenticationReady || store.busy || store.authenticating)
                 Button("Cancel", role: .cancel) { store.intentRequest = nil }
             }.navigationTitle("Shortcut action") }
         }
@@ -108,7 +109,7 @@ struct InventoryView: View {
     @State var filter = "all"
     var items: [InventoryItem] {
         store.state.items.filter { item in
-            (search.isEmpty || item.name.localizedCaseInsensitiveContains(search) || item.barcode == search) && (category == "All" || item.category == category) && (filter != "low" || item.status != "ok") && (filter != "expiry" || store.expiring.contains(where: { $0.id == item.id }))
+            (search.isEmpty || item.name.localizedCaseInsensitiveContains(search) || BarcodeIdentity.matches(item.barcode, search)) && (category == "All" || item.category == category) && (filter != "low" || item.status != "ok") && (filter != "expiry" || store.expiring.contains(where: { $0.id == item.id }))
         }.sorted { a, b in sort == "Quantity" ? a.qty < b.qty : sort == "Expiry" ? (a.expirationDate ?? .distantFuture) < (b.expirationDate ?? .distantFuture) : a.name.localizedStandardCompare(b.name) == .orderedAscending }
     }
     var body: some View {
@@ -127,7 +128,7 @@ struct InventoryView: View {
         .sheet(isPresented: $add) { ItemEditor(item: InventoryItem(name: ""), initialBarcode: barcode) }
         .sheet(isPresented: $scanner) { BarcodeScanner { code in
             scanner = false
-            if let found = store.state.items.first(where: { $0.barcode == code }) { scannedID = found.id }
+            if let found = store.state.items.first(where: { BarcodeIdentity.matches($0.barcode, code) }) { scannedID = found.id }
             else { barcode = code; add = true }
         } }
         .navigationDestination(isPresented: Binding(get: { scannedID != nil }, set: { if !$0 { scannedID = nil } })) { if let id = scannedID { ItemDetail(id: id) } }
@@ -168,7 +169,7 @@ struct ItemDetail: View {
             } else { ContentUnavailableView("Item removed", systemImage: "cabinet") }
         }.confirmationDialog("Delete this item? Historical transactions will be retained.", isPresented: $confirmDelete) { Button("Delete", role: .destructive) { Task { await store.perform { try await store.delete(id); dismiss() } } } }
     }
-    func change(_ sign: Int, reason: String) { Task { await store.perform { guard let value = Decimal(string: amount), value > 0 else { throw InventoryError.invalidQuantity }; try await store.adjust(Adjustment(itemId: id, delta: value * Decimal(sign), reason: reason)) } } }
+    func change(_ sign: Int, reason: String) { Task { await store.perform { guard let value = QuantityInput.parse(amount), value > 0 else { throw InventoryError.invalidQuantity }; try await store.adjust(Adjustment(itemId: id, delta: value * Decimal(sign), reason: reason)) } } }
 }
 struct ItemEditor: View {
     @EnvironmentObject var store: PantryStore
@@ -193,9 +194,9 @@ struct ItemEditor: View {
                     Toggle("Record purchase date", isOn: $purchase)
                     if purchase { DatePicker("Purchased", selection: $purchaseDate, displayedComponents: .date) }
                     Toggle("Record a date", isOn: $expiry)
-                    if expiry { Picker("Date type", selection: Binding(get: { item.dateKind ?? "Best before" }, set: { item.dateKind = $0 })) { Text("Best before").tag("Best before"); Text("Expiration").tag("Expiration") }; DatePicker("Date", selection: $date, displayedComponents: .date); Text("Recorded dates alone do not determine food safety.").font(.caption) }
+                    if expiry { Picker("Date type", selection: Binding(get: { item.dateKind ?? "Expiration" }, set: { item.dateKind = $0 })) { Text("Best before").tag("Best before"); Text("Expiration").tag("Expiration") }; DatePicker("Date", selection: $date, displayedComponents: .date); Text("Recorded dates alone do not determine food safety.").font(.caption) }
                 }
-            }.navigationTitle("Food details").toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Save") { saving = true; Task { await store.perform { guard low.isEmpty || Decimal(string: low) != nil else { throw InventoryError.invalidQuantity }; item.lowAt = low.isEmpty ? nil : Decimal(string: low); item.expirationDate = expiry ? date : nil; item.purchaseDate = purchase ? purchaseDate : nil; if let image = item.imageURL, !image.isEmpty, URL(string: image)?.scheme != "https" { throw InventoryErrorBridge.message("Product images require an HTTPS URL") }; try await store.save(item); dismiss() }; saving = false } }.disabled(saving) } }
+            }.navigationTitle("Food details").toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Save") { saving = true; Task { await store.perform { guard low.isEmpty || QuantityInput.parse(low) != nil else { throw InventoryError.invalidQuantity }; item.lowAt = low.isEmpty ? nil : QuantityInput.parse(low); item.expirationDate = expiry ? date : nil; item.dateKind = expiry ? (item.dateKind ?? "Expiration") : nil; item.purchaseDate = purchase ? purchaseDate : nil; if let image = item.imageURL, !image.isEmpty, URL(string: image)?.scheme != "https" { throw InventoryErrorBridge.message("Product images require an HTTPS URL") }; try await store.save(item); dismiss() }; saving = false } }.disabled(saving) } }
         }.onAppear { low = item.lowAt.map(number) ?? ""; expiry = item.expirationDate != nil; date = item.expirationDate ?? Date(); purchase = item.purchaseDate != nil; purchaseDate = item.purchaseDate ?? Date(); if !initialBarcode.isEmpty { item.barcode = initialBarcode } }
     }
     func optionalText(_ name: String, _ value: Binding<String?>) -> some View { TextField(name, text: Binding(get: { value.wrappedValue ?? "" }, set: { value.wrappedValue = $0 })) }
@@ -228,6 +229,7 @@ struct ShoppingView: View {
 }
 struct InboxView: View {
     @EnvironmentObject var store: PantryStore
+    var initialFoodID: String? = nil
     @State var newFood = false
     @State var chosen: String?
     @State var itemID = ""
@@ -243,6 +245,13 @@ struct InboxView: View {
             }
             if store.inbox.isEmpty { ContentUnavailableView("All linked", systemImage: "link", description: Text("Unrecognized Logbook foods appear here after synchronization.")) }
         }.navigationTitle("Link inbox").refreshable { await store.syncLogbook() }
+        .onAppear {
+            if let fid = initialFoodID {
+                let link = store.meta["links"]?[fid] as? [String: Any] ?? [:]
+                itemID = link["itemId"] as? String ?? ""; per = (link["per"] as? NSNumber).map { QuantityInput.formatted($0.decimalValue) } ?? "1"
+                linkMode = link["mode"] as? String ?? "per"; chosen = fid
+            }
+        }
         .sheet(isPresented: Binding(get: { chosen != nil }, set: { if !$0 { chosen = nil } })) {
             NavigationStack { Form {
                 TextField("Search pantry foods", text: $linkSearch)
@@ -251,7 +260,8 @@ struct InboxView: View {
                 Picker("Relationship", selection: $linkMode) { Text("Verified units per serving").tag("per"); Text("Compatible recorded measurement").tag("auto") }
                 if linkMode == "per" { TextField("Inventory units per logged serving", text: $per).keyboardType(.decimalPad) }
                 else { Text("Only compatible measured units are converted. Missing measurements or mass/volume mismatches stop synchronization for review.").font(.caption) }
-                Button("Confirm relationship and sync") { guard let fid = chosen else { return }; Task { await store.perform { guard let amount = Decimal(string: per), amount > 0 else { throw InventoryError.verificationRequired }; try await store.link(fid: fid, itemID: itemID, per: amount, mode: linkMode); chosen = nil } } }.disabled(itemID.isEmpty)
+                Text("Already applied changes stay in History. Use Undo to reverse them; this relationship applies to future or waiting entries.").font(.caption)
+                Button("Confirm relationship and sync") { guard let fid = chosen else { return }; Task { await store.perform { guard let amount = QuantityInput.parse(per), amount > 0 else { throw InventoryError.verificationRequired }; try await store.link(fid: fid, itemID: itemID, per: amount, mode: linkMode); chosen = nil } } }.disabled(itemID.isEmpty)
                 Button("Ignore this food") { guard let fid = chosen else { return }; Task { await store.perform { try await store.ignore(fid: fid); chosen = nil } } }
             }.sheet(isPresented: $newFood) { ItemEditor(item: InventoryItem(name: "")) }.navigationTitle("Verify serving").toolbar { Button("Cancel") { chosen = nil } } }
         }
@@ -271,7 +281,7 @@ struct HistoryView: View {
                 if let shortfall = row["unfulfilled"] as? NSNumber, shortfall.doubleValue != 0 { Text("Requested change: \(row["requestedDelta"] ?? "") \(row["unit"] ?? "") · Applied: \(row["delta"] ?? "") \(row["unit"] ?? "")").font(.caption) }
                 Text(Date(timeIntervalSince1970: (row["ts"] as? Double ?? 0) / 1000).formatted()).font(.caption).foregroundStyle(.secondary)
                 if let source = row["source"] as? [String: Any], let food = source["food"] as? String { Text("Logbook: \(food) · \(recordedQuantity(source)) · \(source["date"] ?? "")").font(.caption) }
-                if row["undone"] as? Bool != true, let id = row["id"] as? String { Button("Undo") { Task { await store.perform { try await store.undo(id) } } }.font(.caption).buttonStyle(.borderless) }
+                if row["undone"] as? Bool != true, row["reason"] as? String != "undo", let id = row["id"] as? String, let itemID = row["itemId"] as? String, store.state.items.contains(where: { $0.id == itemID }) { Button("Undo") { Task { await store.perform { try await store.undo(id) } } }.font(.caption).buttonStyle(.borderless) }
             }.padding(.vertical, 4)
         }.navigationTitle("History").searchable(text: $search)
     }
@@ -307,9 +317,9 @@ struct SettingsView: View {
                     Text("Device-only inventory stays separate when you sign in. No automatic migration or cloud replacement occurs.").font(.caption)
                     TextField("Email", text: $email).textContentType(.emailAddress).textInputAutocapitalization(.never)
                     SecureField("Password", text: $password); Toggle("Create account", isOn: $create)
-                    Button(create ? "Create account" : "Sign in") { Task { await store.perform { try await store.email(email, password: password, create: create) } } }.disabled(!store.configured || !store.authenticationReady || store.busy)
-                    Button("Sign in with Google") { Task { await store.perform { try await store.google() } } }.disabled(!store.configured || !store.authenticationReady || store.busy)
-                    Button("Send password reset") { Task { await store.perform { guard store.configured else { return }; try await Auth.auth().sendPasswordReset(withEmail: email) } } }.disabled(!store.configured || !store.authenticationReady || store.busy)
+                    Button(create ? "Create account" : "Sign in") { Task { await store.perform { try await store.email(email, password: password, create: create) } } }.disabled(!store.configured || !store.authenticationReady || store.busy || store.authenticating)
+                    Button("Sign in with Google") { Task { await store.perform { try await store.google() } } }.disabled(!store.configured || !store.authenticationReady || store.busy || store.authenticating)
+                    Button("Send password reset") { Task { await store.perform { guard store.configured else { return }; try await Auth.auth().sendPasswordReset(withEmail: email) } } }.disabled(!store.configured || !store.authenticationReady || store.busy || store.authenticating)
                 }
                 if !store.configured { Text("Cloud not configured: add the registered iOS Firebase plist. Device-only mode works without it.").font(.caption) }
             }
@@ -329,6 +339,7 @@ struct SettingsView: View {
             if let links = store.meta["links"], !links.isEmpty {
                 Section("Linked Logbook foods") { ForEach(links.keys.sorted(), id: \.self) { fid in
                     let link = links[fid] as? [String: Any] ?? [:]
+                    NavigationLink("Change \(link["food"] as? String ?? fid) relationship") { InboxView(initialFoodID: fid) }
                     Button("Ignore \(link["food"] as? String ?? fid)") { Task { await store.perform { try await store.ignore(fid: fid) } } }
                 } }
             }
@@ -401,7 +412,7 @@ struct ShoppingEditor: View {
         }.navigationTitle("Shopping item").toolbar {
             Button("Cancel") { dismiss() }
             Button("Save") { Task { await store.perform {
-                guard let quantity = Decimal(string: amount), quantity > 0, !row.name.trimmingCharacters(in: .whitespaces).isEmpty, !row.list.isEmpty else { throw InventoryError.invalidQuantity }
+                guard let quantity = QuantityInput.parse(amount), quantity > 0, !row.name.trimmingCharacters(in: .whitespaces).isEmpty, !row.list.isEmpty else { throw InventoryError.invalidQuantity }
                 row.quantity = quantity
                 if let index = store.state.shopping.firstIndex(where: { $0.id == row.id }) { store.state.shopping[index] = row }
                 try await store.saveShopping(); dismiss()

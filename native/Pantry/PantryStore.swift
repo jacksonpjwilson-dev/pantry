@@ -32,6 +32,7 @@ struct DeviceState: Codable {
     @Published var busy = false
     @Published var user: User?
     @Published var authenticationReady = false
+    @Published var authenticating = false
     @Published var cacheWritable = true
     @Published var lastSync: Date?
     @Published var route = "home"
@@ -44,7 +45,7 @@ struct DeviceState: Codable {
         let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
         func value(_ key: String) -> String? { query.first { $0.name == key }?.value }
         if url.host == "action" {
-            guard let kind = value("kind"), ["shopping", "purchase", "inventory"].contains(kind), let name = value("name"), !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let quantity = Decimal(string: value("quantity") ?? "1"), quantity > 0, !quantity.isNaN else { error = "Invalid Shortcut parameters"; return }
+            guard let kind = value("kind"), ["shopping", "purchase", "inventory"].contains(kind), let name = value("name"), !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let quantity = QuantityInput.parse(value("quantity") ?? "1", locale: Locale(identifier: "en_US_POSIX")), quantity > 0, !quantity.isNaN else { error = "Invalid Shortcut parameters"; return }
             intentRequest = IntentRequest(kind: kind, name: name, quantity: quantity)
         } else if let host = url.host, ["home", "inventory", "shopping", "inbox", "settings"].contains(host) {
             requestedFilter = ["low", "expiry"].contains(value("filter") ?? "") ? value("filter")! : "all"
@@ -94,10 +95,12 @@ struct DeviceState: Codable {
                 Task { @MainActor in
                     guard let self else { return }
                     self.user = user; self.account = user.map { AccountScope.cloud($0.uid) } ?? AccountScope.device
-                    self.state = DeviceState(); self.history = []; self.meta = [:]; self.lastSync = nil
-                    self.loadLocal(); self.authenticationReady = true; self.status = user == nil ? "Device only" : "Pending synchronization"
+                    self.state = DeviceState(); self.history = []; self.meta = [:]; self.lastSync = nil; self.error = nil
+                    self.status = user == nil ? "Device only" : "Pending synchronization"
+                    self.loadLocal(); self.authenticationReady = true
                     if user != nil { await self.refresh() }
                     await self.applyWidgetCommands()
+                    if user != nil { await self.syncLogbook() }
                 }
             }
         } else { authenticationReady = true }
@@ -112,6 +115,7 @@ struct DeviceState: Codable {
             if let saved = try snapshot() { state = try JSONDecoder().decode(DeviceState.self, from: saved.payload) }
             history = (try JSONSerialization.jsonObject(with: state.ledgerData)) as? [[String: Any]] ?? []
             meta = (try JSONSerialization.jsonObject(with: state.metaData)) as? [String: [String: Any]] ?? [:]
+            if let last = meta["state"]?["nativeLastSuccessfulSync"] as? Double { lastSync = Date(timeIntervalSince1970: last / 1000) }
             publishWidget(); WatchBridge.shared.publish(state: state)
         } catch { cacheWritable = false; self.error = "Local cache could not be opened: \(error.localizedDescription)" }
     }
@@ -199,7 +203,7 @@ struct DeviceState: Codable {
                 guard scope == account else { throw InventoryError.conflict }
                 state.pendingShopping?.removeAll { $0.id == row.id }; try persist()
             }
-            for op in state.queue { try await cloudAdjust(op, source: nil, note: "Queued manual operation") }
+            for op in state.queue { try await cloudAdjust(op, source: nil, note: "Queued manual operation", account: scope) }
             guard scope == account else { throw InventoryError.conflict }
             state.queue = []; try persist()
             let items = try await collection("items").getDocuments(source: .server)
@@ -271,7 +275,8 @@ struct DeviceState: Codable {
     private func entry(_ op: Adjustment, itemName: String, unit: String, before: Decimal, after: Decimal, source: [String: Any]?, note: String) -> [String: Any] {
         ["id": op.id, "itemId": op.itemId, "itemName": itemName, "unit": unit, "delta": NSDecimalNumber(decimal: after - before), "requestedDelta": NSDecimalNumber(decimal: op.delta), "unfulfilled": NSDecimalNumber(decimal: op.delta - (after - before)), "qtyBefore": NSDecimalNumber(decimal: before), "qtyAfter": NSDecimalNumber(decimal: after), "reason": op.reason, "source": source as Any? ?? NSNull(), "note": note, "ts": Date().timeIntervalSince1970 * 1000, "undone": false]
     }
-    private func cloudAdjust(_ op: Adjustment, source: [String: Any]?, note: String) async throws {
+    private func cloudAdjust(_ op: Adjustment, source: [String: Any]?, note: String, account expectedAccount: String? = nil) async throws {
+        guard expectedAccount == nil || expectedAccount == account else { throw InventoryError.conflict }
         let lr = try collection("ledger").document(op.id), ir = try collection("items").document(op.itemId)
         _ = try await cloud!.runTransaction { tx, pointer in
             do {
@@ -298,11 +303,13 @@ struct DeviceState: Codable {
             _ = try await cloud!.runTransaction { tx, pointer in
                 do {
                     let original = try tx.getDocument(lr), undo = try tx.getDocument(ur)
-                    guard let row = original.data(), !undo.exists, row["undone"] as? Bool != true, let itemID = row["itemId"] as? String else { return nil }
+                    guard let row = original.data(), !undo.exists, row["undone"] as? Bool != true, row["reason"] as? String != "undo", let itemID = row["itemId"] as? String else { return nil }
                     let ir = items.document(itemID), snap = try tx.getDocument(ir)
                     guard let item = snap.data() else { throw InventoryError.missingItem }
-                    let before = Decimal(string: (item["qty"] as? NSNumber)?.stringValue ?? "0") ?? 0
-                    let delta = -(Decimal(string: (row["delta"] as? NSNumber)?.stringValue ?? "0") ?? 0)
+                    guard let current = item["qty"] as? NSNumber, current.doubleValue.isFinite, let before = Decimal(string: current.stringValue), before >= 0,
+                          let saved = row["delta"] as? NSNumber, saved.doubleValue.isFinite, let applied = Decimal(string: saved.stringValue),
+                          let oldUnit = row["unit"] as? String, let unit = item["unit"] as? String else { throw InventoryError.invalidQuantity }
+                    let delta = try Measures.reversal(of: applied, recordedUnit: oldUnit, currentUnit: unit)
                     let after = try Adjustment(itemId: itemID, delta: delta, reason: "undo").apply(to: before).after
                     tx.setData(["id": "u_" + id, "itemId": itemID, "itemName": item["name"] ?? "", "unit": item["unit"] ?? "count", "delta": NSDecimalNumber(decimal: after - before), "qtyBefore": NSDecimalNumber(decimal: before), "qtyAfter": NSDecimalNumber(decimal: after), "requestedDelta": NSDecimalNumber(decimal: delta), "unfulfilled": NSDecimalNumber(decimal: delta - (after - before)), "reason": "undo", "source": ["of": id], "ts": Date().timeIntervalSince1970 * 1000, "undone": false], forDocument: ur)
                     tx.updateData(["undone": true], forDocument: lr); tx.updateData(["qty": NSDecimalNumber(decimal: after), "updatedAt": Date().timeIntervalSince1970 * 1000, "updatedBy": "manual"], forDocument: ir)
@@ -311,13 +318,20 @@ struct DeviceState: Codable {
             }
             await refresh()
         } else {
-            guard let i = history.firstIndex(where: { $0["id"] as? String == id }), history[i]["undone"] as? Bool != true, let itemID = history[i]["itemId"] as? String else { return }
-            let delta = -(Decimal(string: (history[i]["delta"] as? NSNumber)?.stringValue ?? "0") ?? 0)
-            try localAdjust(Adjustment(id: "u_" + id, itemId: itemID, delta: delta, reason: "undo"), source: ["of": id], note: "Undo")
-            history[i]["undone"] = true; try persist()
+            guard let i = history.firstIndex(where: { $0["id"] as? String == id }), history[i]["undone"] as? Bool != true, history[i]["reason"] as? String != "undo",
+                  let itemID = history[i]["itemId"] as? String, let item = state.items.first(where: { $0.id == itemID }),
+                  let saved = history[i]["delta"] as? NSNumber, saved.doubleValue.isFinite, let applied = Decimal(string: saved.stringValue), let oldUnit = history[i]["unit"] as? String else { return }
+            let delta = try Measures.reversal(of: applied, recordedUnit: oldUnit, currentUnit: item.unit)
+            let previous = state, previousHistory = history
+            history[i]["undone"] = true
+            do {
+                if history.contains(where: { $0["id"] as? String == "u_" + id }) { try persist() }
+                else { try localAdjust(Adjustment(id: "u_" + id, itemId: itemID, delta: delta, reason: "undo"), source: ["of": id], note: "Undo") }
+            } catch { state = previous; history = previousHistory; throw error }
         }
     }
-    func setMeta(_ name: String, fields: [String: Any]) async throws {
+    func setMeta(_ name: String, fields: [String: Any], account expectedAccount: String? = nil) async throws {
+        guard expectedAccount == nil || expectedAccount == account else { throw InventoryError.conflict }
         let scope = account; activeOperations += 1; defer { activeOperations -= 1 }
         if user != nil { try await collection("meta").document(name).setData(fields, merge: true) }
         guard scope == account else { throw InventoryError.conflict }
@@ -335,45 +349,55 @@ struct DeviceState: Codable {
     func syncLogbook() async {
         guard !busy else { return }
         guard let uid = user?.uid, let cloud else { status = "Logbook disconnected · sign in required"; return }
-        await refresh(); guard !status.hasPrefix("Stale") else { return }
+        let scope = account
+        await refresh(); guard scope == account else { return }; guard !status.hasPrefix("Stale") else { return }
         guard logbookEnabled else { status = "Logbook disconnected · link is off"; publishWidget(); return }
         busy = true; defer { finishBusy() }
         do {
             guard meta["nativeMigration"]?["phase"] as? String != "pending" else { throw InventoryErrorBridge.message("Finish or resume the reviewed device migration before synchronizing Logbook") }
             guard let start = meta["state"]?["startDate"] as? String, start.range(of: #"^\d{4}-\d\d-\d\d$"#, options: .regularExpression) != nil else { throw InventoryErrorBridge.message("Choose the first date to count Logbook food in Settings before enabling consumption synchronization") }
             let doc = try await cloud.collection("logbookV2").document(uid).getDocument(source: .server)
-            guard let raw = doc.data() else { status = "Logbook disconnected · no v2 document"; return }
+            guard scope == account else { return }
+            guard let raw = doc.data() else { status = "Logbook disconnected · no v2 document"; publishWidget(); return }
             let items = Dictionary(uniqueKeysWithValues: state.items.map { ($0.id, wire($0) as Any) })
             let plan = try LegacyLogbookAdapter().plan(document: raw, items: items, ledger: history, meta: meta)
             // Adjustment writes precede inbox removal/checkpoint. A failure leaves retries safe.
             for op in plan.operations where op["t"] as? String == "adjust" {
-                guard let id = op["id"] as? String, let itemID = op["itemId"] as? String, let number = op["delta"] as? NSNumber else { throw InventoryErrorBridge.message("Invalid planned adjustment") }
-                try await cloudAdjust(Adjustment(id: id, itemId: itemID, delta: Decimal(string: number.stringValue)!, reason: op["reason"] as? String ?? "correction"), source: op["source"] as? [String: Any], note: op["note"] as? String ?? "")
+                guard let id = op["id"] as? String, let itemID = op["itemId"] as? String, let number = op["delta"] as? NSNumber, number.doubleValue.isFinite, let delta = Decimal(string: number.stringValue) else { throw InventoryErrorBridge.message("Invalid planned adjustment") }
+                try await cloudAdjust(Adjustment(id: id, itemId: itemID, delta: delta, reason: op["reason"] as? String ?? "correction"), source: op["source"] as? [String: Any], note: op["note"] as? String ?? "", account: scope)
+                guard scope == account else { return }
             }
             for op in plan.operations {
                 guard let key = op["key"] as? String else { continue }
-                if op["t"] as? String == "inbox" { try await setMeta("inbox", fields: [key: op["entry"] ?? [:]]) }
+                if op["t"] as? String == "inbox" { try await setMeta("inbox", fields: [key: op["entry"] ?? [:]], account: scope) }
                 if op["t"] as? String == "uninbox" {
                     try await collection("meta").document("inbox").setData([key: FieldValue.delete()], merge: true)
+                    guard scope == account else { return }
                     meta["inbox"]?.removeValue(forKey: key)
                 }
             }
-            try await setMeta("state", fields: ["lastCheck": Date().timeIntervalSince1970 * 1000, "nativeLastSuccessfulSync": Date().timeIntervalSince1970 * 1000])
+            try await setMeta("state", fields: ["lastCheck": Date().timeIntervalSince1970 * 1000, "nativeLastSuccessfulSync": Date().timeIntervalSince1970 * 1000], account: scope)
+            guard scope == account else { return }
             lastSync = Date(); status = "Connected · Logbook v2"; try persist()
-            busy = false; await refresh(); if !status.hasPrefix("Stale") { status = "Connected · Logbook v2" }; try? await ReminderService.reviewNeeded(scope: accountTag, needed: false)
-        } catch { status = "Logbook pending · review required"; self.error = error.localizedDescription; try? await ReminderService.reviewNeeded(scope: accountTag, needed: true) }
+            busy = false; await refresh(); guard scope == account else { return }; if !status.hasPrefix("Stale") { status = "Connected · Logbook v2" }; try? await ReminderService.reviewNeeded(scope: accountTag, needed: false)
+        } catch { guard scope == account else { return }; status = "Logbook pending · review required"; self.error = error.localizedDescription; publishWidget(); try? await ReminderService.reviewNeeded(scope: accountTag, needed: true) }
+    }
+    private func sourceFoodName(_ fid: String) -> String {
+        if let source = inbox.values.first(where: { String(describing: $0["fid"] ?? "") == fid }), let name = source["food"] as? String, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return name }
+        if let name = (meta["links"]?[fid] as? [String: Any])?["food"] as? String, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return name }
+        return "(food \(fid))"
     }
     func link(fid: String, itemID: String, per: Decimal, mode: String = "per") async throws {
         let scope = account; activeOperations += 1; defer { activeOperations -= 1 }
-        guard per > 0, let item = state.items.first(where: { $0.id == itemID }) else { throw InventoryError.verificationRequired }
-        try await setMeta("links", fields: [fid: ["itemId": itemID, "mode": mode == "auto" ? "auto" : "per", "per": NSDecimalNumber(decimal: per), "food": item.name]])
+        guard per > 0, state.items.contains(where: { $0.id == itemID }) else { throw InventoryError.verificationRequired }
+        try await setMeta("links", fields: [fid: ["itemId": itemID, "mode": mode == "auto" ? "auto" : "per", "per": NSDecimalNumber(decimal: per), "food": sourceFoodName(fid)]])
         if user != nil { try await collection("meta").document("ignored").setData([fid: FieldValue.delete()], merge: true) }
         guard scope == account else { throw InventoryError.conflict }
         meta["ignored"]?.removeValue(forKey: fid); await syncLogbook()
     }
     func ignore(fid: String) async throws {
         let scope = account; activeOperations += 1; defer { activeOperations -= 1 }
-        try await setMeta("ignored", fields: [fid: true])
+        try await setMeta("ignored", fields: [fid: sourceFoodName(fid)])
         for (key, source) in inbox where String(describing: source["fid"] ?? "") == fid {
             if user != nil { try await collection("meta").document("inbox").setData([key: FieldValue.delete()], merge: true) }
             guard scope == account else { throw InventoryError.conflict }
@@ -425,33 +449,41 @@ struct DeviceState: Codable {
         if user != nil { if busy { refreshAgain = true } else { await refresh() } }
     }
     func purchase(_ id: String, addInventory: Bool) async throws {
+        let scope = account; activeOperations += 1; defer { activeOperations -= 1 }
         guard let i = state.shopping.firstIndex(where: { $0.id == id }) else { return }
         let row = state.shopping[i]
         if addInventory, let itemID = row.itemId {
             try await adjust(Adjustment(id: row.purchaseOperationID, itemId: itemID, delta: row.quantity, reason: "bought"))
+            guard scope == account else { throw InventoryError.conflict }
             // refresh can replace shopping; locate again before committing.
             if let index = state.shopping.firstIndex(where: { $0.id == id }) { state.shopping[index].addedToInventory = true }
         }
+        guard scope == account else { throw InventoryError.conflict }
         if let index = state.shopping.firstIndex(where: { $0.id == id }) { state.shopping[index].purchased = true }
         try await saveShopping()
+        guard scope == account else { throw InventoryError.conflict }
         await ShoppingSession.update(completed: state.shopping.filter(\.purchased).count, total: state.shopping.count)
     }
     func email(_ email: String, password: String, create: Bool) async throws {
-        guard authenticationReady, !busy else { throw InventoryErrorBridge.message("Wait for account restoration or synchronization") }
+        guard authenticationReady, !busy, activeOperations == 0, !authenticating else { throw InventoryErrorBridge.message("Wait for account restoration or synchronization") }
         guard configured else { throw InventoryErrorBridge.message("Install the iOS GoogleService-Info.plist first") }
+        guard Auth.auth().currentUser == nil else { throw InventoryErrorBridge.message("Sign out before changing accounts") }
+        authenticating = true; defer { authenticating = false }
         if create { _ = try await Auth.auth().createUser(withEmail: email, password: password) } else { _ = try await Auth.auth().signIn(withEmail: email, password: password) }
     }
     func google() async throws {
-        guard authenticationReady, !busy else { throw InventoryErrorBridge.message("Wait for account restoration or synchronization") }
+        guard authenticationReady, !busy, activeOperations == 0, !authenticating else { throw InventoryErrorBridge.message("Wait for account restoration or synchronization") }
         guard let clientID = FirebaseApp.app()?.options.clientID,
               let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
               let root = scene.windows.first(where: { $0.isKeyWindow })?.rootViewController else { throw InventoryErrorBridge.message("Google sign-in needs the registered iOS Firebase client and URL scheme") }
+        guard Auth.auth().currentUser == nil else { throw InventoryErrorBridge.message("Sign out before changing accounts") }
+        authenticating = true; defer { authenticating = false }
         GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: clientID)
         let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: root)
         guard let token = result.user.idToken?.tokenString else { throw InventoryErrorBridge.message("Missing Google identity token") }
         _ = try await Auth.auth().signIn(with: GoogleAuthProvider.credential(withIDToken: token, accessToken: result.user.accessToken.tokenString))
     }
-    func signOut() throws { guard !busy, activeOperations == 0, state.queue.isEmpty, (state.mutations ?? []).isEmpty, (state.pendingShopping ?? []).isEmpty else { throw InventoryErrorBridge.message("Resolve queued operations before signing out") }; try Auth.auth().signOut(); GIDSignIn.sharedInstance.signOut() }
+    func signOut() throws { guard !busy, !authenticating, activeOperations == 0, state.queue.isEmpty, (state.mutations ?? []).isEmpty, (state.pendingShopping ?? []).isEmpty else { throw InventoryErrorBridge.message("Resolve queued operations before signing out") }; try Auth.auth().signOut(); GIDSignIn.sharedInstance.signOut() }
     struct CloudMigrationPreview: Identifiable {
         var id = UUID(); var source: DeviceState; var digest: String
         var history: [[String: Any]]; var metadata: [String: [String: Any]]

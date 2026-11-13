@@ -16,7 +16,7 @@ final class LogbookTests: XCTestCase {
         let initial = try adapter.plan(document: doc([entry]), items: items, ledger: [], meta: meta)
         XCTAssertEqual(initial.operations.filter { $0["t"] as? String == "adjust" }.count, 1)
         let op = initial.operations[0]
-        let row: [String: Any] = ["id": op["id"]!, "itemId":"eggs", "reason":"eaten", "delta": -2, "source":op["source"]!, "undone": false]
+        let row: [String: Any] = ["id": op["id"]!, "itemId":"eggs", "unit":"count", "reason":"eaten", "delta": -2, "source":op["source"]!, "undone": false]
         XCTAssertTrue(try adapter.plan(document: doc([entry]), items: items, ledger: [row], meta: meta).operations.isEmpty)
         let removed = try adapter.plan(document: doc([]), items: items, ledger: [row], meta: meta)
         XCTAssertEqual(removed.operations.first?["delta"] as? Int, 2)
@@ -63,8 +63,70 @@ final class LogbookTests: XCTestCase {
         let adapter = try adapter(), entry: [String: Any] = ["fid":"egg", "q":2]
         let op = try adapter.plan(document: doc([entry]), items: items, ledger: [], meta: meta).operations.first!
         var ledger: [[String: Any]] = (0..<600).map { ["id":"manual-\($0)", "reason":"manual"] }
-        ledger.append(["id":op["id"]!, "itemId":"eggs", "reason":"eaten", "delta":-2, "source":op["source"]!])
+        ledger.append(["id":op["id"]!, "itemId":"eggs", "unit":"count", "reason":"eaten", "delta":-2, "source":op["source"]!])
         XCTAssertTrue(try adapter.plan(document: doc([entry]), items: items, ledger: ledger, meta: meta).operations.isEmpty)
+    }
+    @MainActor func testUnsupportedSnapshotCannotRestoreHistoricalStock() async throws {
+        let adapter = try adapter(), entry: [String: Any] = ["fid":"egg", "q":2]
+        let op = try adapter.plan(document: doc([entry]), items: items, ledger: [], meta: meta).operations.first!
+        let row: [String: Any] = ["id":op["id"]!, "itemId":"eggs", "unit":"count", "reason":"eaten", "delta":-2, "source":op["source"]!]
+        XCTAssertThrowsError(try adapter.plan(document: ["nutrition":[:]], items: items, ledger: [row], meta: meta))
+        XCTAssertThrowsError(try adapter.plan(document: ["r":"unsupported"], items: items, ledger: [row], meta: meta))
+    }
+    @MainActor func testMalformedDayCannotBeTreatedAsDeletion() async throws {
+        let adapter = try adapter(), entry: [String: Any] = ["fid":"egg", "q":2]
+        let op = try adapter.plan(document: doc([entry]), items: items, ledger: [], meta: meta).operations.first!
+        let row: [String: Any] = ["id":op["id"]!, "itemId":"eggs", "unit":"count", "reason":"eaten", "delta":-2, "source":op["source"]!]
+        let malformedValues: [Any] = ["invalid-json", ["unexpected":"object"], [["q":2]]]
+        for value in malformedValues {
+            let invalid: [String: Any] = ["r":["food@2026-11-11":["t":2, "v":value]]]
+            XCTAssertThrowsError(try adapter.plan(document: invalid, items: items, ledger: [row], meta: meta))
+        }
+    }
+    @MainActor func testChangingRelationshipDoesNotReapplyHistoricalConsumption() async throws {
+        let adapter = try adapter(), entry: [String: Any] = ["fid":"egg", "q":2]
+        let op = try adapter.plan(document: doc([entry]), items: items, ledger: [], meta: meta).operations.first!
+        let row: [String: Any] = ["id":op["id"]!, "itemId":"eggs", "unit":"count", "reason":"eaten", "delta":-2, "source":op["source"]!]
+        var changed = meta; changed["links"] = ["egg":["itemId":"eggs", "mode":"per", "per":12]]
+        XCTAssertTrue(try adapter.plan(document: doc([entry]), items: items, ledger: [row], meta: changed).operations.isEmpty)
+    }
+    @MainActor func testRemovingOneEquivalentDuplicateRestoresOneDeduction() async throws {
+        let adapter = try adapter(), entry: [String: Any] = ["fid":"egg", "q":2]
+        let operations = try adapter.plan(document: doc([entry,entry]), items: items, ledger: [], meta: meta).operations
+        let rows: [[String: Any]] = operations.map { ["id":$0["id"]!, "itemId":"eggs", "unit":"count", "reason":"eaten", "delta":-2, "source":$0["source"]!] }
+        let result = try adapter.plan(document: doc([entry]), items: items, ledger: rows, meta: meta)
+        XCTAssertEqual(result.operations.count, 1)
+        XCTAssertEqual(result.operations.first?["reason"] as? String, "correction")
+        XCTAssertEqual(result.operations.first?["delta"] as? Int, 2)
+    }
+    @MainActor func testRemovingDifferentlyAppliedDuplicatesRequiresReview() async throws {
+        let adapter = try adapter(), entry: [String: Any] = ["fid":"egg", "q":2]
+        let operations = try adapter.plan(document: doc([entry,entry]), items: items, ledger: [], meta: meta).operations
+        let rows: [[String: Any]] = operations.enumerated().map { index, op in ["id":op["id"]!, "itemId":"eggs", "unit":"count", "reason":"eaten", "delta":index == 0 ? -2 : -1, "source":op["source"]!] }
+        XCTAssertThrowsError(try adapter.plan(document: doc([entry]), items: items, ledger: rows, meta: meta))
+    }
+    @MainActor func testRemovingAllMixedDuplicatesCanRestoreEveryAppliedAmount() async throws {
+        let adapter = try adapter(), entry: [String: Any] = ["fid":"egg", "q":2]
+        let operations = try adapter.plan(document: doc([entry,entry]), items: items, ledger: [], meta: meta).operations
+        let rows: [[String: Any]] = operations.enumerated().map { index, op in ["id":op["id"]!, "itemId":"eggs", "unit":"count", "reason":"eaten", "delta":index == 0 ? -2 : -1, "source":op["source"]!] }
+        let result = try adapter.plan(document: doc([]), items: items, ledger: rows, meta: meta)
+        XCTAssertEqual(result.operations.count, 2)
+        XCTAssertEqual(result.operations.reduce(0.0) { $0 + ($1["delta"] as? NSNumber)!.doubleValue }, 3)
+    }
+    @MainActor func testUndoMarkerPreventsRestorationWhenFlagIsStale() async throws {
+        let adapter = try adapter(), entry: [String: Any] = ["fid":"egg", "q":2]
+        let op = try adapter.plan(document: doc([entry]), items: items, ledger: [], meta: meta).operations.first!
+        let originalID = op["id"] as! String
+        let original: [String: Any] = ["id":originalID, "itemId":"eggs", "unit":"count", "reason":"eaten", "delta":-2, "source":op["source"]!, "undone":false]
+        let undo: [String: Any] = ["id":"u_" + originalID, "itemId":"eggs", "unit":"count", "reason":"undo", "delta":2, "source":["of":originalID]]
+        XCTAssertTrue(try adapter.plan(document: doc([]), items: items, ledger: [original,undo], meta: meta).operations.isEmpty)
+    }
+    @MainActor func testCorrectionUsesTheRecordedLedgerUnit() async throws {
+        let key = "2026-11-11|rice|m1|150|g|1#1"
+        let original: [String: Any] = ["id":LegacyIdentity.ledgerID("e", key:key), "itemId":"rice", "unit":"g", "reason":"eaten", "delta":-150, "source":["key":key,"date":date,"fid":"rice"]]
+        let current: [String: Any] = ["rice":["id":"rice","name":"Rice","unit":"kg","qty":0.85]]
+        let result = try adapter().plan(document: ["r":[:]], items: current, ledger: [original], meta: [:])
+        XCTAssertEqual((result.operations.first?["delta"] as? NSNumber)?.decimalValue, Decimal(string:"0.15"))
     }
     @MainActor func testDisabledLegacyIntegrationDoesNotPlanDeductions() async throws {
         var disabled = meta; disabled["state"] = ["setup":["linkV2":false]]
