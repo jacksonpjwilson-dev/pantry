@@ -24,6 +24,12 @@ Phase-2 adds local signing/Firebase configuration validation, configurable consi
 | Legacy Logbook | All 17 baseline JavaScriptCore adapter tests pass; shared engine byte check | Authorized source/user scenarios with complete server history |
 | Future native Logbook | Explicitly disconnected | Authorized owner-aware interface with stable UUID/revision/tombstones; contract in `../docs/LOGBOOK-ADAPTER-CONTRACT.md` |
 
+## Phase-2 runtime findings
+
+[Run 43487747314](https://github.com/jacksonpjwilson-dev/pantry/actions/runs/43487747314) executed all three expanded UI scenarios with no skips: manual unknown-barcode entry and the extended inventory/metadata/linked-shopping/undo/relaunch scenario passed. The native Firebase scenario failed before sign-in because the generated Debug configuration did not define Swift's `DEBUG` condition, excluding the test-only emulator backend and disabling sign-in. The generator now explicitly defines `DEBUG` for development configurations only. A fifth configuration regression test checks all ten checked-in Debug/Release configurations, and authentication assertions include the current UI hierarchy for actionable failures. See PR #1 for the final exact-revision rerun result; the earlier auth failure is not a passing Firebase runtime result.
+
+The simulator startup investigation also found a cosmetic status-bar command stalled after boot completed. That command was removed. Cold boot gets an explicit bounded preparation stage; UI execution and synthetic seeding have separate limits. Failure artifacts upload before optional bounded cache saves, so cache cleanup cannot withhold the useful diagnostics again.
+
 ## What is intentionally unfinished
 
 Production Firebase registration/rules validation, signed device install, physical-device acceptance, shared-account deletion policy, conflict-review UI for ambiguous legacy reappearances, Watch complications, optional product database and optional Head Quarter endpoint are not completed. Telemetry remains disconnected. Reliable closed-app periodic sync and server APNs are not implemented. These are not silently substituted with sample data.
