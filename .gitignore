@@ -10,3 +10,16 @@ secrets/
 tools/node_modules/
 node_modules/
 tools/test-out/
+
+# Native build and personal provisioning
+native/.build/
+native/DerivedData/
+**/xcuserdata/
+native/Pantry/GoogleService-Info.plist
+native/emulator/*-debug.log
+native/emulator/.firebase/
+
+native/TestResults/
+
+native/Configuration/Local.xcconfig
+**/__pycache__/

@@ -33,7 +33,9 @@ function Cloud(user){const uid=user.uid,root=()=>fb.db.collection('pantry').doc(
   async load(){const [is,ls,...ms]=await Promise.all([col('items').get(),col('ledger').orderBy('ts','desc').limit(500).get(),...META.map(m=>col('meta').doc(m).get())]);
    d=blank();is.forEach(s=>{d.items[s.id]=Object.assign({id:s.id},s.data())});ls.forEach(s=>{d.ledger[s.id]=Object.assign({id:s.id},s.data())});META.forEach((m,i)=>{d.meta[m]=ms[i].exists?ms[i].data():{}});
    if(!d.meta.state.createdAt){await root().set({owner:uid,app:'pantry',updatedAt:now()},{merge:true})}return d},
-  async putItem(it){const v=Object.assign({},d.items[it.id],it,{updatedAt:now(),updatedBy:'manual'});delete v.id;await col('items').doc(it.id).set(v);d.items[it.id]=Object.assign({id:it.id},v);root().set({updatedAt:now()},{merge:true}).catch(()=>{})},
+  async putItem(it){const previous=d.items[it.id],v=Object.assign({},it,{updatedAt:now(),updatedBy:'manual'});delete v.id;
+   /* Metadata edits must preserve newer transactional quantities and additive native fields. */
+   if(previous)delete v.qty;await col('items').doc(it.id).set(v,{merge:true});d.items[it.id]=Object.assign({},previous||{},{id:it.id},v);root().set({updatedAt:now()},{merge:true}).catch(()=>{})},
   async delItem(id){await col('items').doc(id).delete();delete d.items[id]},
   async adjust(op){const lr=col('ledger').doc(op.id),ir=col('items').doc(op.itemId);let ent=null,it2=null;
    await fb.db.runTransaction(async tx=>{ent=null;const ls=await tx.get(lr);if(ls.exists)return;const is=await tx.get(ir);if(!is.exists)return;const it=Object.assign({id:op.itemId},is.data()),b=+it.qty||0,a=r3(op.setTo!=null?Math.max(0,+op.setTo):Math.max(0,b+op.delta));
