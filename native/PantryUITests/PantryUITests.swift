@@ -78,11 +78,15 @@ final class PantryUITests: XCTestCase {
             XCTAssertTrue(app.buttons["Sign out"].waitForExistence(timeout: 15), app.debugDescription)
             expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: app.buttons["Sign out"])
             waitForExpectations(timeout: 15)
+            XCTAssertFalse(app.alerts["Pantry needs attention"].exists, app.debugDescription)
         }
         signIn("alice@pantry.example")
         app.tabBars.buttons["Inventory"].tap(); app.navigationBars.buttons["Add"].tap()
         let name = "Cloud fixture " + String(UUID().uuidString.prefix(8))
         app.textFields["Name"].tap(); app.textFields["Name"].typeText(name); app.navigationBars.buttons["Save"].tap()
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.navigationBars["Food details"])
+        waitForExpectations(timeout: 30)
+        XCTAssertFalse(app.alerts["Pantry needs attention"].exists, app.debugDescription)
         XCTAssertTrue(app.staticTexts[name].waitForExistence(timeout: 15)); app.staticTexts[name].tap()
         app.buttons["Bought"].tap(); XCTAssertTrue(app.staticTexts["1 count"].waitForExistence(timeout: 15))
         app.tabBars.buttons["Settings"].tap()
@@ -100,6 +104,8 @@ final class PantryUITests: XCTestCase {
         // Deleting this synthetic cloud item retains its ledger, matching production semantics.
         if !app.buttons["Delete item"].isHittable { app.swipeUp() }
         app.buttons["Delete item"].tap(); app.buttons["Delete"].tap()
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.staticTexts[name])
+        waitForExpectations(timeout: 15)
     }
 
 }

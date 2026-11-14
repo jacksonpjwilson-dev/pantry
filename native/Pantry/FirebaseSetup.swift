@@ -16,7 +16,13 @@ enum FirebaseSetup {
             FirebaseApp.configure(options: options)
             Auth.auth().useEmulator(withHost: "127.0.0.1", port: 9099)
             try? Auth.auth().signOut() // Fresh synthetic account per UI invocation; never used by release builds.
-            Firestore.firestore().useEmulator(withHost: "127.0.0.1", port: 8080)
+            let firestore = Firestore.firestore()
+            let settings = firestore.settings
+            settings.host = "127.0.0.1:8080"
+            // Firebase 11's useEmulator helper only sets host; the local server has no TLS.
+            settings.isSSLEnabled = false
+            settings.cacheSettings = MemoryCacheSettings()
+            firestore.settings = settings
             return
         }
         #endif

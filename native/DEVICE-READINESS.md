@@ -30,6 +30,8 @@ Phase-2 adds local signing/Firebase configuration validation, configurable consi
 
 The next corrected run reached the native Firebase API and exposed a keychain error in the unsigned simulator app. Simulator builds now use ad hoc signing and a simulator-only entitlement with each target's own bundle identifier as its application/keychain identity. A sixth configuration test checks that scope and the SDK-conditional selection. Device builds retain the standard entitlement file and use the owner's provisioning profile; simulator signing does not validate real-device signing or live Firebase registration.
 
+The signed simulator run passed sign-in and exposed the next setup issue: Firebase 11.15's `useEmulator` helper changed the host but retained TLS. The local Firestore emulator has no TLS, so server reads failed with `WRONG_VERSION_NUMBER`. The Debug-only loopback fixture now explicitly selects plaintext and memory cache; real Firebase configuration retains the SDK's normal TLS settings. The native SDK scenario rejects synchronization alerts and waits for the Save sheet to close before tapping an inventory row.
+
 The simulator startup investigation also found a cosmetic status-bar command stalled after boot completed. That command was removed. Cold boot gets an explicit bounded preparation stage; UI execution and synthetic seeding have separate limits. Failure artifacts upload before optional bounded cache saves, so cache cleanup cannot withhold the useful diagnostics again.
 
 ## What is intentionally unfinished
