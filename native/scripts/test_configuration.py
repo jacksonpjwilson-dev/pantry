@@ -1,11 +1,20 @@
 import importlib.util
 import unittest
+import re
 from pathlib import Path
 spec = importlib.util.spec_from_file_location('configure_ios', Path(__file__).with_name('configure-ios.py'))
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
 class ConfigurationTests(unittest.TestCase):
+    def test_checked_in_project_enables_debug_backend_only_in_debug(self):
+        project = (Path(__file__).resolve().parents[1]/'Pantry.xcodeproj/project.pbxproj').read_text()
+        configurations = re.findall(r'isa = XCBuildConfiguration;.*?buildSettings = \{(.*?)\}; name = (Debug|Release);', project)
+        self.assertEqual(len(configurations), 10)
+        for settings, mode in configurations:
+            flag = re.search(r'SWIFT_ACTIVE_COMPILATION_CONDITIONS = "([^"]*)"', settings)
+            self.assertIsNotNone(flag)
+            self.assertEqual('DEBUG' in flag.group(1).split(), mode == 'Debug')
     def test_personal_settings_share_identifiers(self):
         text = module.configuration('ABCDE12345', 'dev.example.pantry', 'group.dev.example.pantry')
         self.assertIn('DEVELOPMENT_TEAM = ABCDE12345', text)

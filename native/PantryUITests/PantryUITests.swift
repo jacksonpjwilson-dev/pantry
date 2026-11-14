@@ -73,6 +73,7 @@ final class PantryUITests: XCTestCase {
             let field = app.textFields["Email"]
             XCTAssertTrue(field.waitForExistence(timeout: 10)); field.tap(); field.typeText(email)
             app.secureTextFields["Password"].tap(); app.secureTextFields["Password"].typeText("SyntheticPassword123!")
+            XCTAssertTrue(app.buttons["Sign in"].isEnabled, app.debugDescription)
             app.buttons["Sign in"].tap()
             XCTAssertTrue(app.buttons["Sign out"].waitForExistence(timeout: 15))
             expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: app.buttons["Sign out"])
