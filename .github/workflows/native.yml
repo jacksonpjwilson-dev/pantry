@@ -40,7 +40,7 @@ jobs:
       - name: Build Apple simulator targets
         run: |
           set -o pipefail
-          xcodebuild -project native/Pantry.xcodeproj -scheme Pantry -configuration Debug -derivedDataPath native/DerivedData -destination "id=$PANTRY_SIMULATOR" CODE_SIGNING_ALLOWED=NO build 2>&1 | tee native-build.log
+          xcodebuild -project native/Pantry.xcodeproj -scheme Pantry -configuration Debug -derivedDataPath native/DerivedData -destination "id=$PANTRY_SIMULATOR" CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- build 2>&1 | tee native-build.log
       - name: Prepare simulator for UI testing
         timeout-minutes: 10
         run: |

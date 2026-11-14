@@ -88,6 +88,7 @@ Open Pantry on both devices. Confirm the Watch receives a dated phone snapshot a
 ## Troubleshooting
 
 * **Signing/App Group error:** confirm membership/role, exact registered identifiers, team on every target, and that profiles include the shared group. Use Xcode's signing repair tools; do not commit profiles/private keys.
+* **Firebase keychain error in a simulator:** use the normal Xcode Run action or the signed simulator UI-test script. CI uses ad hoc signing plus `Simulator.entitlements`, selected only for `iphonesimulator`; signing-disabled builds are suitable for compilation checks but do not establish working Firebase keychain access. Physical iPhones use your real development profile and the ordinary entitlement file.
 * **Google returns to browser or cannot sign in:** re-download the iOS plist after enabling Google, rerun the script, confirm Firebase bundle ID equals the signed phone bundle ID, then rebuild. Google is disabled if registration validation fails.
 * **Permission denied / stale cloud status:** check connectivity, current account and authorized deployed rules. Preserve queued operations and backups. Never remove records or change rules just to clear an error.
 * **Simulator AX initialization timeout:** this previously occurred before any app test and passed on rerun. CI now boots/waits for the simulator before testing, disables parallel UI clones, and captures simulator logs, screenshot and xcresult summary on failure. A simulator failure is separate from proof of physical-device behavior.

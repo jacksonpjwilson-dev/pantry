@@ -1,6 +1,7 @@
 import importlib.util
 import unittest
 import re
+import plistlib
 from pathlib import Path
 spec = importlib.util.spec_from_file_location('configure_ios', Path(__file__).with_name('configure-ios.py'))
 module = importlib.util.module_from_spec(spec)
@@ -15,6 +16,13 @@ class ConfigurationTests(unittest.TestCase):
             flag = re.search(r'SWIFT_ACTIVE_COMPILATION_CONDITIONS = "([^"]*)"', settings)
             self.assertIsNotNone(flag)
             self.assertEqual('DEBUG' in flag.group(1).split(), mode == 'Debug')
+    def test_simulator_keychain_identity_is_scoped_to_each_bundle(self):
+        root = Path(__file__).resolve().parents[1]
+        entitlements = plistlib.loads((root/'Configuration/Simulator.entitlements').read_bytes())
+        self.assertEqual(entitlements['application-identifier'], '$(PRODUCT_BUNDLE_IDENTIFIER)')
+        self.assertEqual(entitlements['keychain-access-groups'], ['$(PRODUCT_BUNDLE_IDENTIFIER)'])
+        project = (root/'Pantry.xcodeproj/project.pbxproj').read_text()
+        self.assertEqual(project.count('"CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]" = "Configuration/Simulator.entitlements"'), 4)
     def test_personal_settings_share_identifiers(self):
         text = module.configuration('ABCDE12345', 'dev.example.pantry', 'group.dev.example.pantry')
         self.assertIn('DEVELOPMENT_TEAM = ABCDE12345', text)

@@ -9,7 +9,7 @@ def obj(name, value):
     key = ident(name); objects[key] = value; return key
 def quote(s): return '"' + s.replace('"', '\\"') + '"'
 def arr(values): return '(' + ', '.join(values) + ')'
-def settings(values): return '{' + ' '.join(k + ' = ' + quote(str(v)) + ';' for k,v in values.items()) + '}'
+def settings(values): return '{' + ' '.join((quote(k) if '[' in k else k) + ' = ' + quote(str(v)) + ';' for k,v in values.items()) + '}'
 app = ident('app'); widget = ident('widget'); watch = ident('watch'); uitests = ident('uitests')
 configref = obj('sharedconfig', '{isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "Configuration/Shared.xcconfig"; sourceTree = "<group>";}')
 files=[configref]; appbuild=[]; widgetbuild=[]; watchbuild=[]; uitestbuild=[]; resources=[]
@@ -72,8 +72,8 @@ def configlist(name,extra):
         configs.append(obj(name+mode,'{isa = XCBuildConfiguration; baseConfigurationReference = '+configref+'; buildSettings = '+settings(values)+'; name = '+mode+';}'))
     return obj(name+'configlist','{isa = XCConfigurationList; buildConfigurations = '+arr(configs)+'; defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;}')
 projectconfig=configlist('project',{})
-appconfig=configlist('app',{'PRODUCT_NAME':'$(TARGET_NAME)','PRODUCT_BUNDLE_IDENTIFIER':'$(PANTRY_BUNDLE_ID)','INFOPLIST_FILE':'Configuration/App-Info.plist','CODE_SIGN_ENTITLEMENTS':'Configuration/Pantry.entitlements','GENERATE_INFOPLIST_FILE':'NO'})
-widgetconfig=configlist('widget',{'PRODUCT_NAME':'$(TARGET_NAME)','PRODUCT_BUNDLE_IDENTIFIER':'$(PANTRY_BUNDLE_ID).widgets','INFOPLIST_FILE':'Configuration/Widget-Info.plist','CODE_SIGN_ENTITLEMENTS':'Configuration/Pantry.entitlements','APPLICATION_EXTENSION_API_ONLY':'YES','SKIP_INSTALL':'YES','GENERATE_INFOPLIST_FILE':'NO'})
+appconfig=configlist('app',{'PRODUCT_NAME':'$(TARGET_NAME)','PRODUCT_BUNDLE_IDENTIFIER':'$(PANTRY_BUNDLE_ID)','INFOPLIST_FILE':'Configuration/App-Info.plist','CODE_SIGN_ENTITLEMENTS':'Configuration/Pantry.entitlements','CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]':'Configuration/Simulator.entitlements','GENERATE_INFOPLIST_FILE':'NO'})
+widgetconfig=configlist('widget',{'PRODUCT_NAME':'$(TARGET_NAME)','PRODUCT_BUNDLE_IDENTIFIER':'$(PANTRY_BUNDLE_ID).widgets','INFOPLIST_FILE':'Configuration/Widget-Info.plist','CODE_SIGN_ENTITLEMENTS':'Configuration/Pantry.entitlements','CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]':'Configuration/Simulator.entitlements','APPLICATION_EXTENSION_API_ONLY':'YES','SKIP_INSTALL':'YES','GENERATE_INFOPLIST_FILE':'NO'})
 watchconfig=configlist('watch',{'PRODUCT_NAME':'$(TARGET_NAME)','PRODUCT_BUNDLE_IDENTIFIER':'$(PANTRY_BUNDLE_ID).watchkitapp','INFOPLIST_FILE':'Configuration/Watch-Info.plist','SDKROOT':'watchos','SUPPORTED_PLATFORMS':'watchos watchsimulator','WATCHOS_DEPLOYMENT_TARGET':'10.0','TARGETED_DEVICE_FAMILY':'4','SKIP_INSTALL':'YES','GENERATE_INFOPLIST_FILE':'NO'})
 obj('watch','{isa = PBXNativeTarget; buildConfigurationList = '+watchconfig+'; buildPhases = '+arr([watchsource,watchframework,watchresource])+'; dependencies = (); name = PantryWatch; productName = PantryWatch; productReference = '+watchProduct+'; productType = "com.apple.product-type.application";}')
 uitestconfig=configlist('uitest',{'PRODUCT_NAME':'$(TARGET_NAME)','PRODUCT_BUNDLE_IDENTIFIER':'$(PANTRY_BUNDLE_ID).uitests','GENERATE_INFOPLIST_FILE':'YES','TEST_TARGET_NAME':'Pantry','ENABLE_TESTING_SEARCH_PATHS':'YES'})
